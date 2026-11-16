@@ -1,26 +1,62 @@
 // AI Flows notifier: posts one macOS notification and quits. Clicking the
 // notification relaunches the app, which opens the session it points to.
 //
-//   open -n -g -a "AI Flows.app" --args --id q-123 --title "…" --subtitle "…" \
-//        --body "…" --url "claude://code/continue?session=local_…" --thread <sid>
+//   open -n -g -a "AI Flows.app" --args --payload ~/.claude/ai-flows/notify/<random>.json
 //   open -n -g -a "AI Flows.app" --args --remove q-123     (question answered)
+//
+// The payload file holds {"id","title","subtitle","body","url","thread"}. It
+// is a file and not arguments because other accounts can read the arguments
+// of running programs. It is only accepted from the private notify folder,
+// owned by you and readable by nobody else, and deleted once read.
 
 import AppKit
+import Darwin
 import UserNotifications
 
+let knownKeys: Set<String> = ["payload", "remove"]
+
+// The argument after a known key is always its value, even when it starts
+// with "--".
 func parseArguments() -> [String: String] {
+    let args = Array(CommandLine.arguments.dropFirst())
     var out: [String: String] = [:]
-    var key: String?
-    for arg in CommandLine.arguments.dropFirst() {
-        if arg.hasPrefix("--") {
-            key = String(arg.dropFirst(2))
-            out[key!] = ""
-        } else if let k = key {
-            out[k] = arg
-            key = nil
+    var i = 0
+    while i < args.count {
+        let key = args[i].hasPrefix("--") ? String(args[i].dropFirst(2)) : ""
+        if knownKeys.contains(key) {
+            out[key] = i + 1 < args.count ? args[i + 1] : ""
+            i += 2
+        } else {
+            i += 1
         }
     }
     return out
+}
+
+func readPayload(_ path: String) -> [String: String]? {
+    let folder = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/ai-flows/notify")
+    let resolved = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+    guard resolved.hasPrefix(folder + "/"), resolved.hasSuffix(".json") else { return nil }
+    var info = stat()
+    guard lstat(resolved, &info) == 0,
+          (info.st_mode & S_IFMT) == S_IFREG,          // a plain file, not a link or a pipe
+          info.st_uid == getuid(),                      // yours
+          (info.st_mode & 0o077) == 0,                  // nobody else can read or change it
+          info.st_size < 64 * 1024 else { return nil }
+    defer { unlink(resolved) }
+    guard let data = FileManager.default.contents(atPath: resolved),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+    return object.compactMapValues { $0 as? String }
+}
+
+// A click only ever opens a Claude session or the dashboard on 127.0.0.1,
+// whatever URL the payload holds.
+func isAllowed(_ url: URL) -> Bool {
+    switch url.scheme?.lowercased() {
+    case "claude": return url.host?.lowercased() == "code"
+    case "http": return url.host == "127.0.0.1"
+    default: return false
+    }
 }
 
 final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
@@ -33,6 +69,8 @@ final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         center.delegate = self
+        // Never linger, even if macOS never answers the permission request.
+        quit(after: 30)
 
         if let id = args["remove"], !id.isEmpty {
             center.removeDeliveredNotifications(withIdentifiers: [id])
@@ -40,7 +78,8 @@ final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
             return
         }
 
-        guard let title = args["title"], !title.isEmpty else {
+        guard let path = args["payload"], let payload = readPayload(path),
+              let title = payload["title"], !title.isEmpty else {
             // Started by a click on a notification (or by hand): the click
             // arrives through the delegate below, then we are done.
             quit(after: 5)
@@ -51,13 +90,13 @@ final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
             guard granted else { self.quit(after: 0); return }
             let content = UNMutableNotificationContent()
             content.title = title
-            if let subtitle = self.args["subtitle"], !subtitle.isEmpty { content.subtitle = subtitle }
-            content.body = self.args["body"] ?? ""
+            if let subtitle = payload["subtitle"], !subtitle.isEmpty { content.subtitle = subtitle }
+            content.body = payload["body"] ?? ""
             content.sound = .default
-            content.threadIdentifier = self.args["thread"] ?? "ai-flows"
-            if let url = self.args["url"] { content.userInfo = ["url": url] }
+            content.threadIdentifier = payload["thread"] ?? "ai-flows"
+            if let url = payload["url"] { content.userInfo = ["url": url] }
             let request = UNNotificationRequest(
-                identifier: self.args["id"] ?? UUID().uuidString, content: content, trigger: nil)
+                identifier: payload["id"] ?? UUID().uuidString, content: content, trigger: nil)
             self.center.add(request) { _ in self.quit(after: 1) }
         }
     }
@@ -67,7 +106,7 @@ final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
                                 withCompletionHandler done: @escaping () -> Void) {
         if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
            let link = response.notification.request.content.userInfo["url"] as? String,
-           let url = URL(string: link) {
+           let url = URL(string: link), isAllowed(url) {
             NSWorkspace.shared.open(url)
         }
         done()

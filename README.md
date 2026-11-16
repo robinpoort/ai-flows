@@ -28,13 +28,29 @@ cd ai-flows
 ./install.sh
 ```
 
-Then open http://localhost:4777. The installer:
+Then open the dashboard with `./open.sh`. It opens http://127.0.0.1:4777 with
+a one-time code in the link (single use, two minutes); the page trades it for
+your access key and keeps that. You need this once per browser. For another
+browser or an app with a web view (no address bar), run `./open.sh --copy` and
+paste the link into its address bar or into the field the locked page shows.
+`./open.sh --new-key` makes a new key, which signs out every browser.
 
-1. builds `notifier/AI Flows.app`, the small helper that shows notifications;
-2. adds the AI Flows hook to `~/.claude/settings.json` next to any hooks you
-   already have (a backup goes to `settings.json.bak-ai-flows`);
+The installer:
+
+1. copies what runs into a private folder, `~/.claude/ai-flows/app` (owner
+   only): the server, the page and the notification helper, which it builds
+   there (`AI Flows.app`). Nothing runs from the checkout itself, so neither a
+   `git pull` nor someone who can write to the folders it sits in can change
+   what runs. It warns when one of those folders is writable for others;
+2. copies the hook to `~/.claude/ai-flows/hook.sh` and adds it to
+   `~/.claude/settings.json` next to any hooks you already have (a backup goes
+   to `settings.json.bak-ai-flows`, readable by you only);
 3. runs the server as LaunchAgent `local.ai-flows`, which starts at login and
-   restarts if it stops.
+   restarts if it stops. On its first start the server creates the access key
+   in `~/.claude/ai-flows/token`.
+
+Use http://127.0.0.1:4777, not `localhost`: that name tries the IPv6 address
+first. The server takes both, but only while it runs.
 
 Running Claude sessions pick up the hooks by themselves. Until a session sends
 its first event, the dashboard reads its state from the transcript.
@@ -50,10 +66,16 @@ Notifications, and allow it in any Focus you use.
 git pull && ./install.sh
 ```
 
-The installer is safe to run again: it rebuilds the helper and restarts the
-server. Open dashboards reload themselves when the page files change. Run it
-again too after switching Node versions, since the LaunchAgent points at the
-node binary that ran the installer.
+The installer is safe to run again: it refreshes the private copy and the
+hook, rebuilds the helper when its source changed and restarts the server.
+Open dashboards reload themselves once the new page is installed. Run it again too after switching Node
+versions, since the LaunchAgent points at the node binary that ran the
+installer.
+
+The hook runs in every Claude session, so treat an update like any code you
+run: `git fetch && git log -p HEAD..@{u}` shows what changed before you merge.
+A `git pull` on its own changes nothing that runs: the hook, the server, the
+page and the helper all run from the copies `install.sh` makes.
 
 ## Uninstall
 
@@ -62,26 +84,106 @@ node binary that ran the installer.
 ```
 
 Stops the server, removes the hooks and the helper. It lists what is left for
-you to delete: the event log in `~/.claude/ai-flows/`, the server log and this
-folder. Your Claude sessions and transcripts are not touched.
+you to delete: `~/.claude/ai-flows/` (event log, settings, access key), the
+settings backup, the server log and this folder. Your Claude sessions and
+transcripts are not touched.
 
-Moving the folder? Run `./uninstall.sh` first and `./install.sh` from the new
-place: the hooks and the LaunchAgent point here by absolute path.
+Moving the folder? Run `./install.sh` again from the new place: it replaces
+the hook entries and the LaunchAgent, which point at the folder by absolute
+path.
 
 ## What it reads and writes
 
 | Where | What |
 |---|---|
-| `~/.claude/settings.json` | Writes: one hook entry per event (removed by `uninstall.sh`) |
-| `~/.claude/ai-flows/` | Writes: daily event logs (7 days kept) and `settings.json` |
+| `~/.claude/settings.json` | Writes: one hook entry per event, marked `# ai-flows` (removed by `uninstall.sh`) |
+| `~/.claude/ai-flows/` | Writes: `app/` (server, page, helper), `hook.sh`, daily event logs (7 days kept), `settings.json`, `token`, one-time `claim` codes, `notify/` payloads |
 | `~/.claude/projects/*/*.jsonl` | Reads: the tail of recent transcripts |
 | `~/Library/Application Support/Claude/claude-code-sessions/` | Reads: the desktop app's session titles and ids |
 | `~/Library/LaunchAgents/local.ai-flows.plist` | Writes: the LaunchAgent |
 | `~/Library/Logs/ai-flows.log` | Writes: server output |
 
 The hook keeps a compact line per event: event name, session id, tool name
-with a short summary (a command, a file path), your prompt and Claude's last
-message, each clipped. It never stores file contents.
+with a short summary, your prompt (600 characters) and Claude's last message
+(1,500), plus the text of questions and plans. The summary is the first 160
+characters of a command or a file path, so the start of a long command, a
+heredoc included, can end up in it; file contents read or written by tools do
+not. The folder and its files are readable by you only (700/600), like
+Claude's own transcripts.
+
+## Security
+
+**Who can get in.** Every `/api/` call needs the access key from
+`~/.claude/ai-flows/token` (32 random bytes, readable by you only), compared in
+constant time. Other accounts on the Mac, containers and other programs can
+reach 127.0.0.1:4777 but get `401` without the key. The page itself holds no
+data. The key is sent as a header (the live stream alone takes it as `?t=`,
+since EventSource cannot set headers), and it never appears in a link, a
+notification, a process list or a log: `open.sh` passes a one-time code (single
+use, two minutes, owner-only file) that the page trades for the key, and opens
+the link through `osascript`'s stdin. A link that carries a key is ignored, so
+a website cannot swap the stored one.
+
+**Who answers.** The page lives on `127.0.0.1`, never `localhost`: that name
+tries `[::1]` first, where another program could otherwise listen and pose as
+the dashboard. The server also takes `[::1]` on its port and stops if either
+address is taken; `localhost` requests are redirected to `127.0.0.1`.
+
+**What runs.** The server, page and helper run from `~/.claude/ai-flows/app`
+and the hook from `~/.claude/ai-flows/hook.sh` (owner-only), not from the
+checkout.
+
+**Websites.**
+- The server listens on 127.0.0.1 only and answers only requests whose Host is
+  `localhost`, `127.0.0.1` or `[::1]` (no DNS rebinding). It sends no CORS
+  headers, so other sites cannot read its responses.
+- Actions (`/api/open`, `/api/settings`) also need a POST with an `X-AI-Flows`
+  header, which a cross-site page can only send after a preflight that this
+  server refuses.
+- Every response carries a Content Security Policy (own files only,
+  `frame-ancestors 'none'`), `X-Frame-Options: DENY`, `nosniff`,
+  `Referrer-Policy: no-referrer` and `Cross-Origin-Resource-Policy: same-origin`.
+
+**Content from sessions** (prompts, questions, answers, folder names, commands)
+is treated as hostile:
+- Everything shown in the page is escaped. Long texts are clipped before any
+  regex runs, in the server and in the hook (jq's `gsub` is quadratic).
+- Commands the page offers to copy quote paths and ids for the shell.
+- Answer buttons strip control and invisible characters (zero-width, bidi,
+  Unicode tags, variation selectors, fillers, private-use and unassigned code
+  points) before the text reaches your clipboard. No resume command is offered
+  for a folder name with control characters (they could act on your terminal
+  when pasted).
+- Notification texts lose control characters and reach the helper in an
+  owner-only file it deletes after reading, not as arguments (which other
+  accounts could read). On a click it opens only `claude://code/…` and
+  `http://127.0.0.1` links.
+- `/api/open` opens only `claude://code/continue?session=local_…` for a session
+  it finds in the desktop app's files, through `execFile` (no shell).
+- Transcripts are only read from `~/.claude/projects`, and only regular files.
+
+**The hook** runs with `PATH=/usr/bin:/bin`, absolute program paths, a jq
+owned by root or you and `HOME=/var/empty` for jq (no `~/.jq`). It writes to
+the folder passed in its command line (not one from the environment) under a
+lock, so lines of concurrent hooks never interleave. It clips before
+processing (a 125 KB command takes under 0.1 s) and always exits 0. Its
+entry in `settings.json` single-quotes the paths, so odd folder names stay
+inert. `settings.json` is rewritten atomically and stays owner-only.
+
+**The server** survives malformed requests, `null` bodies and odd question
+texts; only the four offered periods are computed, live connections are capped
+at 16 and slow readers are dropped; errors are logged at most once per 10
+minutes per kind.
+
+**Not covered.**
+- A program running as you can read the key, just as it can read `~/.claude`
+  itself. So can a browser extension that may read pages on 127.0.0.1.
+- While the server is down (before login, after `uninstall.sh`), another
+  program could take the port; your browser would then send it nothing but
+  what you type.
+- Notification banners show question texts; check System Settings →
+  Notifications → AI Flows → Show previews if others can see your screen.
+- A website can find out that something listens on port 4777, not what.
 
 ## Good to know
 
@@ -97,7 +199,8 @@ message, each clipped. It never stores file contents.
 
 - **Hooks (live).** `hook.sh` is a Claude Code hook for the session, prompt,
   tool, permission, notification, subagent and stop events. It runs async,
-  takes ~10 ms and always exits 0, so it never slows down or blocks a session.
+  takes a few milliseconds and always exits 0, so it never slows down or
+  blocks a session.
 - **Desktop app.** Titles and the link that opens a session come from the
   desktop app's session files.
 - **Transcripts (fallback).** Sessions without hook events yet are read from
@@ -110,9 +213,7 @@ with a question. The question disappears as soon as you answer.
 
 **Opening sessions.** "Open in Claude", a mini row or an answer button asks the
 server to run `open claude://code/continue?session=local_…`, so the browser
-never shows its "Open Claude?" prompt. `/api/open` only accepts POST with an
-`X-AI-Flows` header (cross-site pages cannot send it without a preflight the
-server never answers), and every request must use a localhost host name.
+never shows its "Open Claude?" prompt.
 
 **Notifications.** The server checks every 2 seconds. A question must stay open
 for 4 seconds before it is announced (no pop-up while you are already
@@ -123,13 +224,16 @@ switches notifications on or off; switching on sends a test. They come from
 `local.ai-flows.notifier`, ad-hoc signed, no Dock icon). Time-sensitive
 notifications, which would break through a Focus, are not possible: that
 entitlement needs a developer provisioning profile, and macOS kills an ad-hoc
-signed app that carries it. The icon is a blue tile with a white wave; 16 and
-32 px are drawn separately, and macOS rounds the corners.
+signed app that carries it. The icon follows the RP plugin and extension icon
+system: on the `#0042FF` tile a white speech bubble (the question) with a blue
+wave (the flow), in front of a 33% white card (another session), all inside the
+192 square keyline. 16 px (white only) and 32 px (one tint) are drawn
+separately, and macOS rounds the corners.
 
 **Mini view.** One row per session: status dot, title and time; questions also
 show the question. It switches on in a window narrower than 360 px, with `?mini`
 at any size (`?full` forces the normal layout), or via **Mini-venster**, which
-opens a 320×460 pop-up. Below 220×160 only two counters remain.
+opens a 320×460 pop-up. In another app, open http://127.0.0.1:4777/?mini. Below 220×160 only two counters remain.
 
 **Steady layout.** Live updates patch cards in place, and sessions keep their
 order while they work (sorted by when they entered their status). The header
@@ -144,6 +248,7 @@ which removed the scrollbar again, and the layout flickered.
 | File | Role |
 |---|---|
 | `install.sh` / `uninstall.sh` | Install or update everything / remove it again |
+| `open.sh` | Open the dashboard with your access key (`--copy`: copy the link) |
 | `hook.sh` | Hook command: stdin event → compact JSON line in the daily log |
 | `install-hooks.js` | Adds (`--remove`: removes) the hook entries in `~/.claude/settings.json` |
 | `install-service.js` | Installs (`--remove`: removes) the LaunchAgent |
@@ -153,9 +258,13 @@ which removed the scrollbar again, and the layout flickered.
 
 ## Development
 
-`node server.js` runs the server in the foreground (`PORT=…` for another port;
-stop the LaunchAgent first or pick another port). `AI_FLOWS_DIR=…` points it at
-another event log, and `AI_FLOWS_DRY_OPEN=1` logs sessions it would open and
-notifications it would send instead of doing it. `?snapshot` loads the state
-once instead of streaming it, for headless screenshots. After changing
-`server.js`, run `node install-service.js` to restart the service.
+`node server.js` runs the server from the checkout in the foreground (`PORT=…` for another port;
+stop the LaunchAgent first or pick another port; the installer reads
+`AI_FLOWS_PORT`). `AI_FLOWS_DIR=…` points it at another folder (event log,
+settings and its own key), and `AI_FLOWS_DRY_OPEN=1` logs sessions it would
+open and notifications it would send instead of doing it. To feed it test
+events, pipe JSON into `./hook.sh <folder>`. API calls need the key as
+`X-AI-Flows-Token` (or `?t=` for the stream). `?snapshot` loads the state once
+instead of streaming it, for headless screenshots. Changes in the checkout
+only reach the running dashboard through `./install.sh`, which copies them and
+restarts the service.

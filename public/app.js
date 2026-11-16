@@ -20,6 +20,97 @@
     },
   };
 
+  // Access: the page trades a one-time code from ./open.sh (#c=…) for the key,
+  // which then lives in this browser's storage. The key itself never travels
+  // in a link, and the code leaves the address bar straight away. A link that
+  // carries a key (#t=…) is ignored, so no website can swap the stored key.
+  let token = store.get('token', '');
+  const CODE_RE = /(?:^|[#&?])c=([A-Za-z0-9_-]{32,})/;
+  const KEY_RE = /^[A-Za-z0-9_-]{32,}$/;
+
+  function codeFromLink() {
+    const m = location.hash.match(CODE_RE);
+    if (!m) {
+      // A link with a key in it is not used, but it should not linger either.
+      if (/(?:^#|&)t=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
+      return '';
+    }
+    history.replaceState(null, '', location.pathname + location.search);
+    return m[1];
+  }
+
+  async function claim(code) {
+    try {
+      const r = await fetch('/api/claim', {
+        method: 'POST',
+        headers: { 'X-AI-Flows': '1', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+      if (!r.ok) return false;
+      const d = await r.json();
+      if (!d || typeof d.token !== 'string' || !KEY_RE.test(d.token)) return false;
+      token = d.token;
+      store.set('token', token);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function keyWorks(candidate) {
+    try { return (await fetch('/api/settings', { headers: { 'X-AI-Flows-Token': candidate } })).ok; } catch { return false; }
+  }
+
+  function unlock() {
+    document.body.classList.remove('locked');
+    document.getElementById('locked').hidden = true;
+    connect();
+  }
+  const showUnlockError = (show) => { document.getElementById('unlock-error').hidden = !show; };
+
+  // A link opened or pasted into a tab that is already open does not reload it.
+  window.addEventListener('hashchange', async () => {
+    const code = codeFromLink();
+    if (!code) return;
+    if (await claim(code)) { showUnlockError(false); unlock(); } else { showLocked(); showUnlockError(true); }
+  });
+
+  // For apps and browsers without an address bar: paste the link from
+  // `./open.sh --copy`, or the bare key. Both are checked before anything is kept.
+  async function unlockFromField() {
+    const input = document.getElementById('unlock-input');
+    const value = input.value.trim();
+    const m = value.match(CODE_RE);
+    let ok = false;
+    if (m) {
+      ok = await claim(m[1]);
+    } else if (KEY_RE.test(value) && await keyWorks(value)) {
+      token = value;
+      store.set('token', token);
+      ok = true;
+    }
+    if (!ok) { showUnlockError(true); input.select(); return; }
+    input.value = '';
+    showUnlockError(false);
+    unlock();
+  }
+  document.getElementById('unlock-button').addEventListener('click', unlockFromField);
+  document.getElementById('unlock-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') unlockFromField(); });
+  const apiHeaders = (extra = {}) => ({ 'X-AI-Flows-Token': token, ...extra });
+
+  function showLocked() {
+    document.body.classList.add('locked');
+    document.getElementById('locked').hidden = false;
+    if (es) { es.close(); es = null; }
+  }
+
+  // Text from the model that ends up on your clipboard (an answer you paste as
+  // your own message, a command): strip control and invisible characters —
+  // zero-width, bidi, Unicode tags, variation selectors, fillers, private-use
+  // and unassigned code points — and keep answers short.
+  const INVISIBLE = /[\p{Cc}\p{Cf}\p{Co}\p{Cn}\u034F\u115F\u1160\u3164\uFFA0\u2800\uFE00-\uFE0F\u{E0100}-\u{E01EF}]/gu;
+  const cleanAnswer = (s) => Array.from(String(s).replace(INVISIBLE, '').replace(/\s+/g, ' ').trim()).slice(0, 300).join('');
+
   const STATUS = {
     working: { label: 'Bezig', cls: 'working' },
     permission: { label: 'Toestemming nodig', cls: 'permission' },
@@ -248,7 +339,7 @@
       html: `
       <article class="card flow ${isOpen ? 'open' : ''}" data-key="${esc(key)}">
         <div class="meta">
-          <span class="pill ${st.cls}"><span class="dot"></span>${esc(st.label)}</span>
+          <span class="pill ${st.cls}${s.unread ? ' unread' : ''}"${s.unread ? ' title="Nog niet bekeken in Claude"' : ''}><span class="dot"></span>${esc(st.label)}</span>
           <span class="chip-app">${esc(s.app)}</span>
           ${statusTime(s)}
         </div>
@@ -273,7 +364,7 @@
 
   function miniRow(s, withQuestion) {
     const key = 'm:' + s.id;
-    const cls = MINI_CLASS[s.status] || 'done';
+    const cls = (MINI_CLASS[s.status] || 'done') + (s.unread ? ' unread' : '');
     const st = STATUS[s.status] || STATUS.idle;
     let sub = '';
     if (withQuestion && s.question) {
@@ -283,7 +374,7 @@
         : q.text.split('\n')[0];
     }
     const when = (s.question && s.question.ts) || (s.status === 'working' ? s.since : s.lastTs);
-    const tip = [s.title, s.project, st.label, s.question && s.question.text].filter(Boolean).join(' · ');
+    const tip = [s.title, s.project, s.unread ? 'nog niet bekeken' : st.label, s.question && s.question.text].filter(Boolean).join(' · ');
     const inner = `
       <span class="mdot"></span>
       <span class="mmain"><span class="mtitle">${esc(s.title)}</span>${sub ? `<span class="msub">${esc(sub)}</span>` : ''}</span>
@@ -307,6 +398,8 @@
     const parts = [];
     if (questions.length) parts.push(`<span class="hot">${questions.length} ${questions.length === 1 ? 'vraag' : 'vragen'}</span>`);
     if (working) parts.push(`${working} bezig`);
+    const unseen = sessions.filter((s) => s.unread).length;
+    if (unseen) parts.push(`<span class="new">${unseen} nieuw</span>`);
     setHTML($('#mini-sum'), parts.length ? parts.join(' · ') : 'Alles rustig');
     for (const el of $$('[data-count="working"]')) setText(el, working);
     $('.micro.q').classList.toggle('hot', questions.length > 0);
@@ -400,7 +493,8 @@
     setHidden($('#flow-empty'), sessions.length > 0);
 
     const working = sessions.filter((s) => s.status === 'working').length;
-    setText($('#flows-sub'), `${sessions.length} in de laatste ${windowLabel(state.windowMin)}${working ? ` · ${working} bezig` : ''}`);
+    const unseen = sessions.filter((s) => s.unread).length;
+    setText($('#flows-sub'), `${sessions.length} in de laatste ${windowLabel(state.windowMin)}${working ? ` · ${working} bezig` : ''}${unseen ? ` · ${unseen} nieuw` : ''}`);
     for (const el of $$('[data-count="questions"]')) {
       setText(el, questions.length);
       el.classList.toggle('hot', questions.length > 0);
@@ -497,7 +591,8 @@
   async function openSession(s) {
     if (!s || !s.openUrl) return;
     try {
-      const r = await fetch('/api/open?id=' + encodeURIComponent(s.id), { method: 'POST', headers: { 'X-AI-Flows': '1' } });
+      const r = await fetch('/api/open?id=' + encodeURIComponent(s.id), { method: 'POST', headers: apiHeaders({ 'X-AI-Flows': '1' }) });
+      if (r.status === 401) { showLocked(); return; }
       if (r.ok && (await r.json()).ok) return;
     } catch {}
     openUrl(s.openUrl);
@@ -512,7 +607,7 @@
       openSession(find(el.dataset.sid));
     } else if (act === 'answer') {
       const s = find(el.dataset.sid);
-      const text = el.dataset.text;
+      const text = cleanAnswer(el.dataset.text);
       await copy(text);
       if (s && s.openUrl) {
         toast(`“${text}” staat op je klembord. Plak het in de sessie met ⌘V.`);
@@ -521,7 +616,7 @@
         toast(`“${text}” staat op je klembord.`);
       }
     } else if (act === 'copy') {
-      await copy(el.dataset.text);
+      await copy(String(el.dataset.text).replace(INVISIBLE, ''));
       toast('Gekopieerd. Plak het in je terminal.');
     } else if (act === 'toggle') {
       const key = el.dataset.key;
@@ -575,7 +670,7 @@
     try {
       const r = await fetch('/api/settings', {
         method: 'POST',
-        headers: { 'X-AI-Flows': '1', 'Content-Type': 'application/json' },
+        headers: apiHeaders({ 'X-AI-Flows': '1', 'Content-Type': 'application/json' }),
         body: JSON.stringify({ notify }),
       });
       const d = await r.json();
@@ -607,7 +702,7 @@
 
   $('#open-mini').addEventListener('click', () => {
     const w = window.open('/?mini', 'ai-flows-mini', 'popup=yes,width=320,height=460');
-    if (!w) toast('Je browser blokkeerde het venster. Open anders localhost:4777/?mini.');
+    if (!w) toast('Je browser blokkeerde het venster. Open anders 127.0.0.1:4777/?mini.');
   });
 
   // ---------------------------------------------------------------- data
@@ -616,10 +711,15 @@
     if (es) es.close();
     // ?snapshot loads the state once (for headless screenshots).
     if (new URLSearchParams(location.search).has('snapshot')) {
-      fetch('/api/state?window=' + windowMin).then((r) => r.json()).then((d) => { connected = true; state = d; render(); });
+      fetch('/api/state?window=' + windowMin, { headers: apiHeaders() })
+        .then((r) => { if (r.status === 401) throw new Error('locked'); return r.json(); })
+        .then((d) => { connected = true; state = d; render(); })
+        .catch(showLocked);
       return;
     }
-    es = new EventSource('/api/stream?window=' + windowMin);
+    if (!token) { showLocked(); return; }
+    // EventSource cannot send headers, so the key goes along as ?t=.
+    es = new EventSource('/api/stream?window=' + windowMin + '&t=' + encodeURIComponent(token));
     es.onmessage = (e) => {
       connected = true;
       try { state = JSON.parse(e.data); } catch { return; }
@@ -629,13 +729,24 @@
       render();
     };
     es.onopen = () => { connected = true; setLive(true); };
-    es.onerror = () => { connected = false; setLive(false); };
+    es.onerror = () => {
+      connected = false;
+      setLive(false);
+      // A refused key looks like any other error to EventSource: ask once.
+      fetch('/api/settings', { headers: apiHeaders() }).then((r) => { if (r.status === 401) showLocked(); }).catch(() => {});
+    };
   }
 
   applyMode();
   syncWindowButtons();
   syncTabs();
   syncBell();
-  connect();
+  (async () => {
+    const code = codeFromLink();
+    if (!code) return connect();
+    if (await claim(code)) return connect();
+    showLocked();
+    showUnlockError(true);
+  })();
   setInterval(() => updateTimes(), 15000);
 })();

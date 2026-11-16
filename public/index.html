@@ -4,14 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AI Flows</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b5bd6'/%3E%3Cpath d='M8 20c3-8 5-8 8 0s5 8 8 0' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
   <header class="top">
     <div class="brand">
       <span class="logo" aria-hidden="true">
-        <svg viewBox="0 0 32 32"><path d="M7 20c3-8 6-8 9 0s6 8 9 0" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
+        <!-- App icon (notifier/icon.svg) on the rounded tile of the icon system. -->
+        <svg viewBox="0 0 256 256"><rect width="256" height="256" rx="48" fill="#0042FF"/><rect x="32" y="32" width="160" height="112" rx="16" fill="#5480FF"/><path d="M80 80h128a16 16 0 0 1 16 16v80a16 16 0 0 1-16 16H120l-32 32v-32h-8a16 16 0 0 1-16-16V96a16 16 0 0 1 16-16Z" fill="#FFFFFF"/><path d="M104 136c10-16 30-16 40 0s30 16 40 0" fill="none" stroke="#0042FF" stroke-width="16" stroke-linecap="round"/></svg>
       </span>
       <div>
         <h1>AI Flows</h1>
@@ -75,7 +76,7 @@
 
   <section class="mini" id="mini" aria-label="AI Flows mini">
     <div class="mini-head">
-      <span class="mini-logo" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M7 20c3-8 6-8 9 0s6 8 9 0" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/></svg></span>
+      <span class="mini-logo" aria-hidden="true"><svg viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#0042FF"/><rect x="4" y="4" width="20" height="14" rx="2" fill="#5480FF"/><path d="M10 10h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H15l-4 4v-4h-1a2 2 0 0 1-2-2V12a2 2 0 0 1 2-2Z" fill="#FFFFFF"/><path d="M12.5 17c1.4-2.6 4.1-2.6 5.5 0s4.1 2.6 5.5 0" fill="none" stroke="#0042FF" stroke-width="2.5" stroke-linecap="round"/></svg></span>
       <span class="mini-sum" id="mini-sum">Verbinden…</span>
       <span class="mini-live" id="mini-live" title="Verbinding"></span>
       <button type="button" class="mini-expand" id="mini-expand" title="Volledig dashboard openen" aria-label="Volledig dashboard openen">
@@ -93,6 +94,23 @@
       <div class="mini-label" id="mini-f-label">Flows</div>
       <div class="mini-list" id="mini-flows"></div>
       <div class="mini-none" id="mini-f-none">Niets actief</div>
+    </div>
+  </section>
+
+  <section class="locked" id="locked" hidden>
+    <div class="locked-card">
+      <svg viewBox="0 0 256 256" aria-hidden="true"><rect width="256" height="256" rx="48" fill="#0042FF"/><rect x="32" y="32" width="160" height="112" rx="16" fill="#5480FF"/><path d="M80 80h128a16 16 0 0 1 16 16v80a16 16 0 0 1-16 16H120l-32 32v-32h-8a16 16 0 0 1-16-16V96a16 16 0 0 1 16-16Z" fill="#FFFFFF"/><path d="M104 136c10-16 30-16 40 0s30 16 40 0" fill="none" stroke="#0042FF" stroke-width="16" stroke-linecap="round"/></svg>
+      <h2>Open AI Flows met je eigen link</h2>
+      <p>Dit dashboard laat je prompts en vragen zien. Daarom vraagt het een sleutel die alleen jij op deze Mac kunt lezen.</p>
+      <p>Draai in de map <code>ai-flows</code>:</p>
+      <pre><code>./open.sh</code></pre>
+      <p>Werk je in een andere app of browser? Draai dan <code>./open.sh --copy</code> en plak de link hier (twee minuten geldig):</p>
+      <div class="unlock">
+        <input type="text" id="unlock-input" placeholder="Plak hier de link" autocomplete="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" aria-label="Link uit open.sh">
+        <button type="button" class="btn primary" id="unlock-button">Ontgrendel</button>
+      </div>
+      <p class="unlock-error" id="unlock-error" hidden>Deze link is verlopen of klopt niet. Maak een nieuwe met <code>./open.sh</code> of <code>./open.sh --copy</code>.</p>
+      <p class="locked-note">Dat hoeft maar één keer per browser: daarna onthoudt deze pagina de sleutel.</p>
     </div>
   </section>
 

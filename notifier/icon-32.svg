@@ -1,4 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- 32 px, drawn on its own grid: one tint at most. -->
   <rect width="32" height="32" fill="#0042FF"/>
-  <path d="M6 16c2.5-6 7.5-6 10 0s7.5 6 10 0" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+  <rect x="4" y="4" width="20" height="14" rx="2" fill="#5480FF"/>
+  <path d="M10 10h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H15l-4 4v-4h-1a2 2 0 0 1-2-2V12a2 2 0 0 1 2-2Z" fill="#FFFFFF"/>
+  <path d="M12.5 17c1.4-2.6 4.1-2.6 5.5 0s4.1 2.6 5.5 0" fill="none" stroke="#0042FF" stroke-width="2.5" stroke-linecap="round"/>
 </svg>

@@ -44,14 +44,41 @@ function safeStat(p) {
   try { return fs.statSync(p); } catch { return null; }
 }
 
+// Prompts from transcripts can be huge (pasted files). Only a short bit is
+// shown, and the regexes below are not linear on hostile input, so clip first.
+const MAX_TEXT = 8000;
+
 function cleanPrompt(text) {
   if (typeof text !== 'string') return '';
-  return text
+  return text.slice(0, MAX_TEXT)
     .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
-    .replace(/<pasted_content[^>]*>[\s\S]*?<\/pasted_content[^>]*>/g, '[geplakte tekst]')
-    .replace(/\s+\n/g, '\n')
+    .replace(/<pasted_content[^>]*>[\s\S]*?<\/pasted_content>/g, '[geplakte tekst]')
+    .split('\n').map((l) => l.trimEnd()).join('\n')
     .trim();
 }
+
+// Every string in a question, clipped: parts and options come from transcripts
+// and can be as long as a transcript line.
+function clipQuestion(q) {
+  if (!q) return null;
+  const c = (v, n) => (typeof v === 'string' ? clip(v, n) : v);
+  return {
+    ...q,
+    text: c(q.text, 1500),
+    detail: c(q.detail, 400),
+    context: c(q.context, 1500),
+    options: (q.options || []).slice(0, 8).map((o) => c(String(o), 200)),
+    parts: q.parts ? q.parts.slice(0, 4).map((p) => ({
+      ...p,
+      header: c(p.header, 100),
+      question: c(p.question, 600),
+      options: (p.options || []).slice(0, 8).map((o) => ({ label: c(o.label, 200), description: c(o.description, 300) })),
+    })) : null,
+  };
+}
+
+// Quote for a POSIX shell: nothing inside single quotes is expanded.
+const shellQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
 // Messages the app or Claude Code injects as a "user" turn (task notices,
 // side-session reports, CI events). They start a turn but are not your words.
@@ -71,7 +98,7 @@ function automatedLabel(text) {
 // The question a finished turn leaves you with, if any.
 function trailingQuestion(text) {
   if (typeof text !== 'string') return null;
-  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  const lines = text.slice(-MAX_TEXT).split('\n').map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return null;
   const strip = (l) => l.replace(/[*_`>#]+/g, '').replace(/\s+/g, ' ').trim();
   const last = strip(lines[lines.length - 1]);
@@ -143,7 +170,14 @@ function ingest(e) {
   if (s.events.length > MAX_EVENTS_PER_SESSION) s.events.splice(0, s.events.length - MAX_EVENTS_PER_SESSION);
 }
 
+// Older installs (and hooks from before `umask 077`) left the log readable for
+// other users on this Mac; make the folder and its files owner-only.
+function restrict(p, mode) {
+  try { if ((fs.statSync(p).mode & 0o777) !== mode) fs.chmodSync(p, mode); } catch {}
+}
+
 function readHookLog() {
+  restrict(EVENTS_DIR, 0o700);
   let names;
   try {
     names = fs.readdirSync(EVENTS_DIR).filter((n) => /^events-\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)).sort();
@@ -160,7 +194,8 @@ function readHookLog() {
   for (const n of names.slice(-2)) {
     const p = path.join(EVENTS_DIR, n);
     const st = safeStat(p);
-    if (!st) continue;
+    if (!st || !st.isFile()) continue;
+    if (!logFiles.has(p)) restrict(p, 0o600);
     let f = logFiles.get(p) || { offset: 0, rest: '' };
     if (st.size < f.offset) f = { offset: 0, rest: '' };
     if (st.size > f.offset) {
@@ -185,9 +220,14 @@ function deriveFromEvents(events) {
   const st = {
     status: 'idle', since: null, lastTs: 0, prompt: null, autoPrompt: null, activity: null,
     wrap: null, ask: null, perm: null, last: null, error: null, model: null,
-    subagents: new Map(), turnStart: null,
+    subagents: new Map(), turnStart: null, sawTurn: false,
   };
   const set = (status, ts) => { if (st.status !== status) { st.status = status; st.since = ts; } };
+  // Only these say something about the session's own turn; a session whose
+  // hooks only saw a background agent finish is still best read from its
+  // transcript.
+  const TURN_EVENTS = new Set(['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure',
+    'PermissionRequest', 'PermissionDenied', 'Stop', 'StopFailure', 'SessionEnd']);
 
   for (const e of events) {
     st.lastTs = Math.max(st.lastTs, e.ts);
@@ -201,6 +241,7 @@ function deriveFromEvents(events) {
       }
       continue;
     }
+    if (TURN_EVENTS.has(e.ev)) st.sawTurn = true;
     switch (e.ev) {
       case 'SessionStart':
         if (e.model) st.model = e.model;
@@ -291,7 +332,7 @@ function readTail(file) {
   const c = tailCache.get(file);
   if (c && Date.now() - c.checkedAt < 3000) return c;
   const st = safeStat(file);
-  if (!st) return null;
+  if (!st || !st.isFile()) return null;
   if (c && c.size === st.size && c.mtimeMs === st.mtimeMs) { c.checkedAt = Date.now(); return c; }
   const start = Math.max(0, st.size - TAIL_BYTES);
   const len = st.size - start;
@@ -425,7 +466,7 @@ function scanTranscripts() {
       if (!f.endsWith('.jsonl')) continue;
       const fp = path.join(dp, f);
       const st = safeStat(fp);
-      if (!st || now - st.mtimeMs > KEEP_MS) continue;
+      if (!st || !st.isFile() || now - st.mtimeMs > KEEP_MS) continue;
       next.set(f.slice(0, -6), { file: fp, mtimeMs: st.mtimeMs });
     }
   }
@@ -457,7 +498,7 @@ function scanDesktop() {
         const fp = path.join(dir, f);
         seen.add(fp);
         const st = safeStat(fp);
-        if (!st) continue;
+        if (!st || !st.isFile()) continue;
         const cached = desktopFiles.get(fp);
         if (cached && cached.mtimeMs === st.mtimeMs) continue;
         try {
@@ -472,6 +513,7 @@ function scanDesktop() {
               cwd: d.cwd || null,
               lastActivityAt: d.lastActivityAt || 0,
               lastUserAt: d.latestUserFrameAt || 0,
+              lastFocusedAt: d.lastFocusedAt || 0,
               summary: d.postTurnSummary || null,
               model: d.model || null,
             },
@@ -489,7 +531,29 @@ function scanDesktop() {
     }
   }
   desktopByCli = byCli;
+  // The session you have open in the app is the one you focused last.
+  let latest = null;
+  for (const { meta } of desktopFiles.values()) if (!latest || meta.lastFocusedAt > latest.lastFocusedAt) latest = meta;
+  focusedLocalId = latest ? latest.localId : null;
+  checkFront();
 }
+
+// Whether the Claude app is the app in front. Together with the session you
+// focused last, that says which answer you are looking at right now.
+let focusedLocalId = null;
+let claudeInFront = false;
+function checkFront() {
+  execFile('/usr/bin/lsappinfo', ['front'], (err, asn) => {
+    if (err || !/^[\w:-]+$/.test(asn.trim())) return;
+    execFile('/usr/bin/lsappinfo', ['info', '-only', 'bundleid', asn.trim()], (err2, out) => {
+      if (!err2) claudeInFront = /bundleID="com\.anthropic\.claudefordesktop"/.test(out);
+    });
+  });
+}
+
+// When you last saw each session's answer: the app records when you focused a
+// session; this adds "it finished while you were looking at it".
+const seenAt = new Map(); // sid -> ms
 
 // ---------------------------------------------------------------- state
 
@@ -499,8 +563,13 @@ function buildSession(sid) {
   const ev = eventSessions.get(sid);
   const tr = transcriptIndex.get(sid);
   const desk = desktopByCli.get(sid) || null;
-  const tpFile = (ev && ev.tp) || (tr && tr.file) || null;
-  const hookSt = ev && ev.events.length ? deriveFromEvents(ev.events) : null;
+  // Only ever read transcripts where Claude Code keeps them.
+  const inProjects = (p) => typeof p === 'string' && path.resolve(p).startsWith(PROJECTS_DIR + path.sep) && p.endsWith('.jsonl');
+  const tpFile = [ev && ev.tp, tr && tr.file].find(inProjects) || null;
+  const fromHooks = ev && ev.events.length ? deriveFromEvents(ev.events) : null;
+  // Hooks that never saw the session's own turn (only, say, a background agent
+  // finishing) know its subagents but not its status: read that elsewhere.
+  const hookSt = fromHooks && (fromHooks.sawTurn || !tpFile) ? fromHooks : null;
   // A hook session only needs its transcript for what the hooks missed.
   const needTranscript = !hookSt || !hookSt.prompt || !hookSt.last ||
     (hookSt.status === 'working' && Date.now() - hookSt.lastTs > CHECK_INTERRUPT_MS);
@@ -516,7 +585,7 @@ function buildSession(sid) {
     if (fromTr) {
       if (!st.prompt && fromTr.prompt) st.prompt = fromTr.prompt;
       if (!st.prompt && fromTr.lastPrompt && !isAutomated(fromTr.lastPrompt)) {
-        st.prompt = { text: cleanPrompt(fromTr.lastPrompt), ts: null };
+        st.prompt = { text: cleanPrompt(fromTr.lastPrompt.slice(0, 2000)), ts: null };
       }
       if (!st.last && fromTr.last) st.last = fromTr.last;
       if (!st.model && fromTr.model) st.model = fromTr.model;
@@ -531,8 +600,9 @@ function buildSession(sid) {
   } else if (fromTr) {
     st = { ...fromTr };
     if (!st.prompt && fromTr.lastPrompt && !isAutomated(fromTr.lastPrompt)) {
-      st.prompt = { text: cleanPrompt(fromTr.lastPrompt), ts: null };
+      st.prompt = { text: cleanPrompt(fromTr.lastPrompt.slice(0, 2000)), ts: null };
     }
+    if (fromHooks) st.subagents = fromHooks.subagents;
     source = 'transcript';
   } else {
     return null;
@@ -540,7 +610,7 @@ function buildSession(sid) {
 
   // Real message times only: the app keeps touching transcript files (cost,
   // title) long after the last message, so file dates overstate activity.
-  const lastTs = Math.max(st.lastTs || 0, (fromTr && fromTr.lastTs) || 0) ||
+  const lastTs = Math.max(st.lastTs || 0, (fromTr && fromTr.lastTs) || 0, (fromHooks && fromHooks.lastTs) || 0) ||
     (tail && tail.mtimeMs) || (tr && tr.mtimeMs) || 0;
   let status = st.status;
   let since = st.since || lastTs;
@@ -550,6 +620,31 @@ function buildSession(sid) {
   // app records when your last message came in.
   if (status === 'working' && !st.turnStart && desk && desk.lastUserAt && desk.lastUserAt < since) since = desk.lastUserAt;
   if (status === 'working' && Date.now() - lastTs > STALE_MS) status = 'stale';
+
+  // Background agents keep a session busy after its own turn ended. Ten
+  // minutes without any of their tool calls and we stop counting one (a
+  // killed agent never sends SubagentStop).
+  const busySubs = st.subagents
+    ? [...st.subagents.values()].filter((a) => Date.now() - ((a.activity && a.activity.ts) || a.ts || 0) < 10 * MINUTE)
+    : [];
+  let activity = st.activity;
+  let background = false;
+  // A finished answer you have not looked at yet (desktop sessions only: the
+  // app is what knows when you focused one).
+  let unread = false;
+  if (desk) {
+    if (claudeInFront && desk.localId === focusedLocalId) seenAt.set(sid, Date.now());
+    const seen = Math.max(desk.lastFocusedAt || 0, seenAt.get(sid) || 0);
+    unread = (st.status === 'done' || st.status === 'error') && (since || 0) > seen;
+  }
+
+  if (busySubs.length && ['done', 'idle', 'interrupted', 'stale'].includes(status)) {
+    status = 'working';
+    background = true;
+    since = Math.min(...busySubs.map((a) => a.ts || Date.now()));
+    activity = busySubs.map((a) => a.activity).filter(Boolean).sort((a, b) => b.ts - a.ts)[0] || null;
+  }
+  if (status !== 'done' && status !== 'error') unread = false;
   if (status === 'idle' && !st.prompt && !st.last && source === 'transcript') status = 'done';
 
   const cwd = (ev && ev.cwd) || (fromTr && fromTr.cwd) || (desk && desk.cwd) || null;
@@ -582,25 +677,31 @@ function buildSession(sid) {
     id: sid,
     localId: desk ? desk.localId : null,
     openUrl: desk ? `claude://code/continue?session=${encodeURIComponent(desk.localId)}&source=ai-flows` : null,
-    resumeCmd: !isDesktop ? `cd ${JSON.stringify(cwd || HOME)} && claude --resume ${sid}` : null,
-    title,
+    // Quoting stops the shell, not the terminal: control characters in a folder
+    // name (an escape that ends a bracketed paste, say) could still act when
+    // pasted. No command to copy for such a path.
+    resumeCmd: !isDesktop && !/[\p{Cc}\p{Cf}]/u.test(`${cwd || ''}${sid}`)
+      ? `cd ${shellQuote(cwd || HOME)} && claude --resume ${shellQuote(sid)}` : null,
+    title: clip(String(title), 200),
     project: project.name,
     projectDetail: project.detail,
     cwd,
     app: isDesktop ? 'Claude-app' : 'Terminal',
     archived: desk ? desk.archived : false,
+    unread,
     status,
     since,
     lastTs,
     prompt: st.prompt ? { text: clip(st.prompt.text, 600), ts: st.prompt.ts } : null,
     autoPrompt: st.autoPrompt || null,
-    activity: st.activity,
+    activity,
+    background,
     last: st.last ? { text: clip(st.last.text, 1500), ts: st.last.ts } : null,
-    recap,
-    question,
+    recap: recap ? clip(String(recap), 1500) : null,
+    question: clipQuestion(question),
     error: st.error,
     model: st.model || (desk && desk.model) || null,
-    subagents: st.subagents ? [...st.subagents.values()].map((a) => ({ type: a.type, activity: a.activity || null })) : [],
+    subagents: busySubs.map((a) => ({ type: a.type, activity: a.activity || null })),
     source,
   };
 }
@@ -625,7 +726,7 @@ function computeState(windowMin) {
   const sessions = [];
   for (const sid of ids) {
     let s;
-    try { s = buildSession(sid); } catch (err) { console.error('session', sid, err.message); continue; }
+    try { s = buildSession(sid); } catch (err) { logOnce(`session ${sid}`, err); continue; }
     if (!s) continue;
     const live = s.status === 'working' || s.status === 'permission';
     if (s.archived && !live) continue;
@@ -634,7 +735,9 @@ function computeState(windowMin) {
   }
   // Order by when a session entered its status, not by its last event: that
   // one changes on every tool call and made busy sessions swap places.
-  sessions.sort((a, b) => (STATUS_RANK[a.status] - STATUS_RANK[b.status]) || (b.since - a.since) || a.id.localeCompare(b.id));
+  // Unseen answers first within "done".
+  const rank = (s) => STATUS_RANK[s.status] + (s.status === 'done' && !s.unread ? 0.5 : 0);
+  sessions.sort((a, b) => (rank(a) - rank(b)) || (b.since - a.since) || a.id.localeCompare(b.id));
   return {
     now,
     // Changes when the page's own files change, so open dashboards reload.
@@ -651,21 +754,69 @@ function computeState(windowMin) {
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 
-function sendJson(res, obj) {
+// Errors are logged at most once per 10 minutes per kind, so a bad transcript
+// cannot grow the log without end.
+const logged = new Map();
+function logOnce(key, err) {
+  const now = Date.now();
+  if (now - (logged.get(key) || 0) < 10 * MINUTE) return;
+  logged.set(key, now);
+  console.error(new Date().toISOString(), key, (err && err.message) || err);
+}
+process.on('unhandledRejection', (err) => logOnce('unhandled', err));
+
+function sendJson(res, obj, status = 200) {
   const body = JSON.stringify(obj);
-  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(body);
 }
 
+// Access key. The checks further down keep websites out; this keeps out other
+// programs and accounts on this Mac, which can reach 127.0.0.1 too. Only you
+// can read the file, and the page learns the key once from your link.
+const TOKEN_FILE = path.join(EVENTS_DIR, 'token');
+function loadToken() {
+  try {
+    const t = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
+    if (/^[A-Za-z0-9_-]{32,}$/.test(t)) { restrict(TOKEN_FILE, 0o600); return t; }
+  } catch {}
+  const t = crypto.randomBytes(32).toString('base64url');
+  fs.mkdirSync(EVENTS_DIR, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(TOKEN_FILE, t + '\n', { mode: 0o600 });
+  return t;
+}
+const TOKEN = Buffer.from(loadToken());
+
+function authorized(req, url) {
+  // EventSource cannot send headers, so the stream (and only the stream) may
+  // pass the key as ?t=.
+  const fromQuery = url.pathname === '/api/stream' ? url.searchParams.get('t') : '';
+  const given = Buffer.from(String(req.headers['x-ai-flows-token'] || fromQuery || ''));
+  return given.length === TOKEN.length && crypto.timingSafeEqual(given, TOKEN);
+}
+
+// The page only offers these periods; anything else is rounded to one of them,
+// so odd values cannot each cost a computation per second.
+const WINDOWS = [30, 120, 480, 1440];
+const windowOf = (v) => WINDOWS.reduce((best, w) => (Math.abs(w - v) < Math.abs(best - v) ? w : best), 120);
+
+const MAX_STREAMS = 16;
 const streams = new Set(); // { res, windowMin, lastBody }
 
 function pushStreams() {
   const byWindow = new Map();
   for (const c of streams) {
+    // A client that stops reading would make us buffer forever: drop it.
+    if (c.res.writableLength > 1024 * 1024) { c.res.destroy(); streams.delete(c); continue; }
     let body = byWindow.get(c.windowMin);
     if (body === undefined) {
-      const { now, ...rest } = computeState(c.windowMin);
-      body = JSON.stringify(rest);
+      try {
+        const { now, ...rest } = computeState(c.windowMin);
+        body = JSON.stringify(rest);
+      } catch (err) {
+        logOnce('state', err);
+        return;
+      }
       byWindow.set(c.windowMin, body);
     }
     if (body !== c.lastBody) {
@@ -683,25 +834,61 @@ function pushStreams() {
 const NOTIFIER_APP = path.join(__dirname, 'notifier', 'AI Flows.app');
 const SETTINGS_FILE = path.join(EVENTS_DIR, 'settings.json');
 const NOTIFY_GRACE_MS = 4000;
+// Clicking a notification for a terminal session opens the dashboard. Always
+// 127.0.0.1, never "localhost": that name tries [::1] first, where another
+// program could be listening (we take [::1] too, but only while we run).
+const DASHBOARD_URL = `http://127.0.0.1:${PORT}/`;
+const NOTIFY_DIR = path.join(EVENTS_DIR, 'notify');
 
 function loadSettings() {
   try { return { notify: true, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) }; } catch { return { notify: true }; }
 }
 let settings = loadSettings();
+restrict(SETTINGS_FILE, 0o600);
 
 function saveSettings() {
-  fs.mkdirSync(EVENTS_DIR, { recursive: true });
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + '\n');
+  fs.mkdirSync(EVENTS_DIR, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
 }
 
 function notifierAvailable() {
   return fs.existsSync(path.join(NOTIFIER_APP, 'Contents', 'MacOS', 'AI Flows'));
 }
 
-function runNotifier(args) {
-  if (process.env.AI_FLOWS_DRY_OPEN) { console.log('notify (dry run):', JSON.stringify(args)); return; }
-  execFile('/usr/bin/open', ['-n', '-g', '-a', NOTIFIER_APP, '--args', ...args], () => {});
+// payload: { id, title, subtitle, body, url, thread }, or { remove: id }.
+// The text goes to the helper in an owner-only file, not as arguments: other
+// accounts can read the arguments of running programs.
+function runNotifier(payload) {
+  const clean = {};
+  for (const [k, v] of Object.entries(payload)) clean[k] = String(v).replace(/[\u0000-\u001f\u007f]/g, ' ');
+  if (process.env.AI_FLOWS_DRY_OPEN) { console.log('notify (dry run):', JSON.stringify(clean)); return; }
+  try {
+    let args;
+    if (clean.remove) {
+      args = ['--remove', clean.remove];
+    } else {
+      fs.mkdirSync(NOTIFY_DIR, { recursive: true, mode: 0o700 });
+      const file = path.join(NOTIFY_DIR, `${crypto.randomBytes(12).toString('hex')}.json`);
+      fs.writeFileSync(file, JSON.stringify(clean), { mode: 0o600 });
+      args = ['--payload', file];
+    }
+    execFile('/usr/bin/open', ['-n', '-g', '-a', NOTIFIER_APP, '--args', ...args], () => {});
+  } catch (err) {
+    logOnce('notify', err);
+  }
 }
+
+// The helper deletes a payload once read; sweep up any it never got to.
+function sweepPayloads() {
+  let names = [];
+  try { names = fs.readdirSync(NOTIFY_DIR); } catch { return; }
+  for (const n of names) {
+    const f = path.join(NOTIFY_DIR, n);
+    const st = safeStat(f);
+    if (st && Date.now() - st.mtimeMs > 10 * MINUTE) { try { fs.unlinkSync(f); } catch {} }
+  }
+}
+setInterval(sweepPayloads, 5 * MINUTE);
 
 const questionKey = (s) => `${s.id}|${s.question.kind}|${s.question.ts || ''}`;
 
@@ -710,14 +897,14 @@ function announceQuestion(s, key) {
   const id = 'q-' + crypto.createHash('sha1').update(key).digest('hex').slice(0, 16);
   const perm = q.kind === 'permission';
   const body = perm && q.detail ? `${q.tool ? q.tool + ': ' : ''}${q.detail}` : q.text;
-  runNotifier([
-    '--id', id,
-    '--title', s.title,
-    '--subtitle', `${perm ? 'Toestemming nodig' : 'Vraag'} · ${s.project}`,
-    '--body', clip(String(body).replace(/\s+/g, ' '), 240),
-    '--url', s.openUrl || `http://localhost:${PORT}/`,
-    '--thread', s.id,
-  ]);
+  runNotifier({
+    id,
+    title: s.title,
+    subtitle: `${perm ? 'Toestemming nodig' : 'Vraag'} · ${s.project}`,
+    body: clip(String(body).replace(/\s+/g, ' '), 240),
+    url: s.openUrl || DASHBOARD_URL,
+    thread: s.id,
+  });
   return id;
 }
 
@@ -726,8 +913,7 @@ let notifyPrimed = false;
 
 function checkQuestions() {
   if (!notifierAvailable()) return;
-  let state;
-  try { state = computeState(120); } catch { return; }
+  const state = computeState(120);
   const now = Date.now();
   const open = new Map();
   for (const s of state.sessions) {
@@ -746,53 +932,76 @@ function checkQuestions() {
   }
   for (const [k, a] of announced) {
     if (open.has(k)) continue;
-    if (a.sentId) runNotifier(['--remove', a.sentId]);
+    if (a.sentId) runNotifier({ remove: a.sentId });
     announced.delete(k);
   }
 }
 
-setInterval(checkQuestions, 2000);
+setInterval(() => { try { checkQuestions(); } catch (err) { logOnce('questions', err); } }, 2000);
 
 function readJson(req) {
   return new Promise((resolve) => {
     let data = '';
-    req.on('data', (c) => { data += c; if (data.length > 10000) req.destroy(); });
+    req.on('data', (c) => { data += c; if (data.length > 10000) { resolve({}); req.destroy(); } });
     req.on('end', () => { try { resolve(JSON.parse(data || '{}')); } catch { resolve({}); } });
+    req.on('close', () => resolve({}));
+    req.on('error', () => resolve({}));
   });
 }
 
+// Actions need a POST with our own header: a cross-site page can only send it
+// after a CORS preflight, which this server never grants.
+const isAction = (req) => req.method === 'POST' && req.headers['x-ai-flows'] === '1';
+
 async function handleSettings(req, res) {
   if (req.method === 'POST') {
-    if (req.headers['x-ai-flows'] !== '1') { res.writeHead(403); return res.end(); }
+    if (!isAction(req)) { res.writeHead(403); return res.end(); }
     const body = await readJson(req);
-    if (typeof body.notify === 'boolean') {
+    if (body && typeof body.notify === 'boolean') {
       settings.notify = body.notify;
       saveSettings();
       if (body.notify && notifierAvailable()) {
-        runNotifier(['--id', 'ai-flows-test', '--title', 'AI Flows', '--subtitle', 'Meldingen staan aan',
-          '--body', 'Je krijgt hier een melding zodra een sessie iets van je nodig heeft.',
-          '--url', `http://localhost:${PORT}/`]);
+        runNotifier({ id: 'ai-flows-test', title: 'AI Flows', subtitle: 'Meldingen staan aan',
+          body: 'Je krijgt hier een melding zodra een sessie iets van je nodig heeft.', url: DASHBOARD_URL });
       }
     }
   }
-  sendJson(res, { ...settings, notifier: notifierAvailable() });
+  sendJson(res, { notify: settings.notify, notifier: notifierAvailable() });
+}
+
+// One-time code: open.sh writes "<code> <unix time>" to an owner-only file and
+// opens the page with #c=<code>; the page trades it here for the key. So the
+// key itself is never in a link (history, clipboard, process list). A code
+// works once and for two minutes; wrong guesses do not use it up.
+const CLAIM_FILE = path.join(EVENTS_DIR, 'claim');
+const CLAIM_MAX_AGE_MS = 2 * MINUTE;
+
+async function handleClaim(req, res) {
+  if (!isAction(req)) { res.writeHead(403); return res.end(); }
+  const body = await readJson(req);
+  const code = body && typeof body.code === 'string' ? body.code : '';
+  let stored = '';
+  let created = 0;
+  try {
+    const st = fs.statSync(CLAIM_FILE);
+    if (st.isFile() && (st.mode & 0o077) === 0) [stored, created] = fs.readFileSync(CLAIM_FILE, 'utf8').trim().split(/\s+/);
+  } catch {}
+  const fresh = !!stored && Date.now() - Number(created) * 1000 <= CLAIM_MAX_AGE_MS;
+  const a = Buffer.from(code);
+  const b = Buffer.from(stored);
+  const match = fresh && b.length >= 32 && a.length === b.length && crypto.timingSafeEqual(a, b);
+  if (match || (stored && !fresh)) { try { fs.unlinkSync(CLAIM_FILE); } catch {} }
+  if (!match) return sendJson(res, { error: 'Deze code is ongeldig of verlopen' }, 401);
+  sendJson(res, { token: TOKEN.toString() });
 }
 
 // Open a session in the Claude app from here, so the browser never has to ask
 // whether it may launch the app.
 function openSession(req, res, sid) {
-  // A cross-site page cannot send this header without a CORS preflight, which
-  // this server never answers.
-  if (req.method !== 'POST' || req.headers['x-ai-flows'] !== '1') {
-    res.writeHead(403);
-    return res.end();
-  }
+  if (!isAction(req)) { res.writeHead(403); return res.end(); }
   scanDesktop();
   const desk = desktopByCli.get(sid);
-  if (!desk || !/^local_[A-Za-z0-9-]{1,64}$/.test(desk.localId || '')) {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    return res.end('{"ok":false}');
-  }
+  if (!desk || !/^local_[A-Za-z0-9-]{1,64}$/.test(desk.localId || '')) return sendJson(res, { ok: false }, 404);
   const link = `claude://code/continue?session=${desk.localId}&source=ai-flows`;
   if (process.env.AI_FLOWS_DRY_OPEN) {
     console.log('open (dry run):', link);
@@ -801,44 +1010,101 @@ function openSession(req, res, sid) {
   execFile('/usr/bin/open', [link], (err) => sendJson(res, { ok: !err }));
 }
 
-const server = http.createServer((req, res) => {
+// Every response: only our own files may load, the page may not be framed by
+// another site (clickjacking), and other origins may not embed our responses.
+const SECURITY_HEADERS = {
+  'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  'X-Frame-Options': 'DENY',
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+  'Cross-Origin-Resource-Policy': 'same-origin',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+};
+
+function handle(req, res) {
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
   // Only answer to localhost names: keeps other websites out via DNS rebinding.
   if (!/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(req.headers.host || '')) {
     res.writeHead(403);
     return res.end();
   }
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const windowMin = Number(url.searchParams.get('window')) || 120;
+  let url;
+  try { url = new URL(req.url, 'http://localhost'); } catch { res.writeHead(400); return res.end(); }
 
-  if (url.pathname === '/api/state') return sendJson(res, computeState(windowMin));
-  if (url.pathname === '/api/open') return openSession(req, res, url.searchParams.get('id'));
-  if (url.pathname === '/api/settings') return handleSettings(req, res);
+  if (url.pathname === '/api/claim') {
+    return handleClaim(req, res).catch((err) => {
+      logOnce('claim', err);
+      if (!res.headersSent) sendJson(res, { error: 'Fout' }, 500);
+    });
+  }
+  if (url.pathname.startsWith('/api/')) {
+    if (!authorized(req, url)) return sendJson(res, { error: 'Geen toegang' }, 401);
+    const windowMin = windowOf(Number(url.searchParams.get('window')) || 120);
+    if (url.pathname === '/api/state') return sendJson(res, computeState(windowMin));
+    if (url.pathname === '/api/open') return openSession(req, res, url.searchParams.get('id'));
+    if (url.pathname === '/api/settings') {
+      return handleSettings(req, res).catch((err) => {
+        logOnce('settings', err);
+        if (!res.headersSent) sendJson(res, { error: 'Fout' }, 500);
+      });
+    }
+    if (url.pathname === '/api/stream') {
+      if (streams.size >= MAX_STREAMS) return sendJson(res, { error: 'Te veel verbindingen' }, 429);
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+      res.write('retry: 2000\n\n');
+      const c = { res, windowMin, lastBody: null };
+      streams.add(c);
+      pushStreams();
+      req.on('close', () => streams.delete(c));
+      return;
+    }
+    return sendJson(res, { error: 'Onbekend' }, 404);
+  }
 
-  if (url.pathname === '/api/stream') {
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
-    res.write('retry: 2000\n\n');
-    const c = { res, windowMin, lastBody: null };
-    streams.add(c);
-    pushStreams();
-    req.on('close', () => streams.delete(c));
-    return;
+  // Pages always live on 127.0.0.1 (see DASHBOARD_URL). Old localhost links
+  // land there too; the browser keeps the #fragment across the redirect.
+  if (!/^127\.0\.0\.1(:\d+)?$/.test(req.headers.host)) {
+    res.writeHead(302, { Location: `http://127.0.0.1:${PORT}${url.pathname}${url.search}` });
+    return res.end();
   }
 
   let file = url.pathname === '/' ? '/index.html' : url.pathname;
   file = path.normalize(file).replace(/^(\.\.[/\\])+/, '');
   const fp = path.join(PUBLIC_DIR, file);
-  if (!fp.startsWith(PUBLIC_DIR)) { res.writeHead(403); return res.end(); }
+  if (!fp.startsWith(PUBLIC_DIR + path.sep)) { res.writeHead(403); return res.end(); }
   fs.readFile(fp, (err, data) => {
-    if (err) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('Niet gevonden'); }
+    if (err) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('Niet gevonden'); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(fp)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
     res.end(data);
   });
-});
+}
+
+function onRequest(req, res) {
+  try {
+    handle(req, res);
+  } catch (err) {
+    logOnce('request', err);
+    if (!res.headersSent) res.writeHead(500);
+    res.end();
+  }
+}
 
 setInterval(() => { if (streams.size) pushStreams(); }, 1000);
 setInterval(() => { for (const c of streams) c.res.write(': ping\n\n'); }, 20000);
 
-server.listen(PORT, HOST, () => {
-  console.log(`AI Flows draait op http://localhost:${PORT}`);
-  console.log(`Hook-log: ${EVENTS_DIR}`);
-});
+// Listen on 127.0.0.1 and also take [::1], so nothing else can answer for
+// "localhost" on this port while we run. If either is taken, stop: something
+// else is squatting the port.
+function listen(host, optional) {
+  const srv = http.createServer(onRequest);
+  srv.on('error', (err) => {
+    if (optional && (err.code === 'EADDRNOTAVAIL' || err.code === 'EAFNOSUPPORT')) return; // no IPv6 here
+    console.error(`${new Date().toISOString()} Kan niet luisteren op ${host} poort ${PORT} (${err.code}). Draait daar al iets anders?`);
+    process.exit(1);
+  });
+  srv.listen(PORT, host);
+}
+listen(HOST, false);
+listen('::1', true);
+console.log(`AI Flows draait op http://127.0.0.1:${PORT}`);
+console.log(`Hook-log: ${EVENTS_DIR}`);

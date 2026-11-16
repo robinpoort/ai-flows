@@ -1,19 +1,23 @@
 #!/bin/sh
 # Removes AI Flows from this Mac: stops the server, takes the hooks out of
-# ~/.claude/settings.json and unregisters the notification helper. Your
-# Claude sessions and transcripts are not touched.
-cd "$(dirname "$0")"
+# ~/.claude/settings.json and removes the private copy with the notification
+# helper. Your Claude sessions and transcripts are not touched.
+cd "$(dirname "$0")" || exit 1
+
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+APP_DIR="$HOME/.claude/ai-flows/app"
 
 node install-service.js --remove
 node install-hooks.js --remove
-if [ -d "notifier/AI Flows.app" ]; then
-  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "notifier/AI Flows.app" 2>/dev/null
-  rm -rf "notifier/AI Flows.app"
-  echo "Meldingsappje verwijderd."
-fi
+for app in "$APP_DIR/notifier/AI Flows.app" "notifier/AI Flows.app"; do
+  [ -d "$app" ] && "$LSREGISTER" -u "$app" 2>/dev/null
+done
+rm -rf "$APP_DIR" "notifier/AI Flows.app"
+echo "Server, pagina en meldingsappje verwijderd."
 
 echo
 echo "AI Flows is verwijderd. Wat er nog staat, kun je zelf weggooien:"
-echo "  ~/.claude/ai-flows/          (event-log van de laatste 7 dagen en je instellingen)"
-echo "  ~/Library/Logs/ai-flows.log  (serverlog)"
-echo "  deze map                     ($(pwd))"
+echo "  ~/.claude/ai-flows/                     (event-log van de laatste 7 dagen, instellingen en toegangssleutel)"
+echo "  ~/.claude/settings.json.bak-ai-flows    (reservekopie van je Claude-instellingen van vóór de laatste wijziging)"
+echo "  ~/Library/Logs/ai-flows.log             (serverlog)"
+echo "  deze map                                ($(pwd))"
