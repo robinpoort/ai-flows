@@ -1,0 +1,844 @@
+#!/usr/bin/env node
+'use strict';
+
+// AI Flows: a local dashboard of Claude Code sessions that are working, waiting
+// for you, or were active recently. Live status comes from Claude Code hooks
+// (hook.sh writes them to a daily log); titles come from the Claude desktop
+// app's session files; transcripts fill in sessions from before the hooks.
+
+const http = require('http');
+const crypto = require('crypto');
+const { execFile } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+const PORT = Number(process.env.PORT) || 4777;
+const HOST = '127.0.0.1';
+const HOME = os.homedir();
+const EVENTS_DIR = process.env.AI_FLOWS_DIR || path.join(HOME, '.claude', 'ai-flows');
+const PROJECTS_DIR = path.join(HOME, '.claude', 'projects');
+const DESKTOP_DIR = path.join(HOME, 'Library', 'Application Support', 'Claude', 'claude-code-sessions');
+const PUBLIC_DIR = path.join(__dirname, 'public');
+
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
+const KEEP_MS = 26 * HOUR; // forget sessions older than this
+const LOG_KEEP_DAYS = 7;
+const STALE_MS = 20 * MINUTE; // "working" with no sign of life for this long
+const CHECK_INTERRUPT_MS = 45 * 1000;
+const TAIL_BYTES = 1500 * 1024;
+const MAX_EVENTS_PER_SESSION = 600;
+
+const QUESTION_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
+const WRAP_TOOL = 'mcp__ccd_turn__wrap_up';
+
+// ---------------------------------------------------------------- helpers
+
+function clip(s, n) {
+  if (typeof s !== 'string') return s;
+  return s.length > n ? s.slice(0, n).trimEnd() + '…' : s;
+}
+
+function safeStat(p) {
+  try { return fs.statSync(p); } catch { return null; }
+}
+
+function cleanPrompt(text) {
+  if (typeof text !== 'string') return '';
+  return text
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
+    .replace(/<pasted_content[^>]*>[\s\S]*?<\/pasted_content[^>]*>/g, '[geplakte tekst]')
+    .replace(/\s+\n/g, '\n')
+    .trim();
+}
+
+// Messages the app or Claude Code injects as a "user" turn (task notices,
+// side-session reports, CI events). They start a turn but are not your words.
+function isAutomated(text) {
+  return /^<(task-notification|side-sessions-event|ci-monitor-event|local-command|command-|bash-|system)/.test(text || '');
+}
+
+function automatedLabel(text) {
+  if (/^<task-notification/.test(text)) return 'Achtergrondtaak gemeld';
+  if (/^<side-sessions-event/.test(text)) return 'Bericht van een andere sessie';
+  if (/^<ci-monitor-event/.test(text)) return 'CI-melding';
+  if (/^<bash-/.test(text)) return 'Shell-commando';
+  if (/^<(command-|local-command)/.test(text)) return 'Slash-commando';
+  return 'Automatisch bericht';
+}
+
+// The question a finished turn leaves you with, if any.
+function trailingQuestion(text) {
+  if (typeof text !== 'string') return null;
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return null;
+  const strip = (l) => l.replace(/[*_`>#]+/g, '').replace(/\s+/g, ' ').trim();
+  const last = strip(lines[lines.length - 1]);
+  if (!/\?\s*[\p{Emoji_Presentation}\p{Extended_Pictographic}]*$/u.test(last)) return null;
+  // Keep only the final sentence(s) that hold the question.
+  const sentences = last.split(/(?<=[.!])\s+(?=[A-ZÀ-Ý])/);
+  const q = sentences.filter((s) => s.includes('?')).join(' ') || last;
+  return clip(q, 400);
+}
+
+function questionFromTurn(wrap, lastText) {
+  if (wrap && typeof wrap.ask === 'string' && wrap.ask.trim()) {
+    const options = Array.isArray(wrap.actions)
+      ? wrap.actions.map((a) => a && (a.label || a.action)).filter(Boolean)
+      : [];
+    return { kind: 'wrap', text: wrap.ask.trim(), options, context: wrap.recap || null };
+  }
+  const q = trailingQuestion(lastText);
+  if (q) return { kind: 'text', text: q, options: [], context: null };
+  return null;
+}
+
+function askFromTool(tool, input) {
+  if (tool === 'AskUserQuestion') {
+    const qs = Array.isArray(input && input.questions) ? input.questions : [];
+    return {
+      kind: 'ask',
+      text: qs.map((q) => q.question).filter(Boolean).join('\n') || 'Claude stelt je een vraag',
+      options: qs.length === 1 && Array.isArray(qs[0].options) ? qs[0].options.map((o) => o.label).filter(Boolean) : [],
+      parts: qs.map((q) => ({
+        header: q.header || null,
+        question: q.question || '',
+        options: Array.isArray(q.options) ? q.options.map((o) => ({ label: o.label, description: o.description || '' })) : [],
+        multi: !!q.multiSelect,
+      })),
+      context: null,
+    };
+  }
+  if (tool === 'ExitPlanMode') {
+    return { kind: 'plan', text: 'Plan klaar: goedkeuren?', options: [], context: clip(input && input.plan, 1200) || null };
+  }
+  return null;
+}
+
+function projectFromCwd(cwd) {
+  if (!cwd) return { name: 'onbekend', detail: '' };
+  const wt = cwd.match(/^(.*?)\/\.claude\/worktrees\/([^/]+)/);
+  if (wt) return { name: path.basename(wt[1]), detail: wt[2] };
+  const rel = cwd.startsWith(HOME) ? '~' + cwd.slice(HOME.length) : cwd;
+  return { name: path.basename(cwd) || rel, detail: rel };
+}
+
+// ---------------------------------------------------------------- hook events
+
+const logFiles = new Map(); // file -> { offset, rest }
+const eventSessions = new Map(); // sid -> { events: [], tp, cwd, ep }
+
+function ingest(e) {
+  if (!e || !e.sid || !e.ts) return;
+  let s = eventSessions.get(e.sid);
+  if (!s) eventSessions.set(e.sid, (s = { events: [], tp: null, cwd: null, ep: null }));
+  if (e.tp) s.tp = e.tp;
+  if (e.cwd) s.cwd = e.cwd;
+  if (e.ep) s.ep = e.ep;
+  // Async hooks may land slightly out of order: keep the list sorted.
+  let i = s.events.length;
+  while (i > 0 && s.events[i - 1].ts > e.ts) i--;
+  s.events.splice(i, 0, e);
+  if (s.events.length > MAX_EVENTS_PER_SESSION) s.events.splice(0, s.events.length - MAX_EVENTS_PER_SESSION);
+}
+
+function readHookLog() {
+  let names;
+  try {
+    names = fs.readdirSync(EVENTS_DIR).filter((n) => /^events-\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)).sort();
+  } catch {
+    return false;
+  }
+  const cutoff = new Date(Date.now() - LOG_KEEP_DAYS * 24 * HOUR).toISOString().slice(0, 10);
+  for (const n of names) {
+    if (n.slice(7, 17) < cutoff) {
+      try { fs.unlinkSync(path.join(EVENTS_DIR, n)); } catch {}
+    }
+  }
+  let changed = false;
+  for (const n of names.slice(-2)) {
+    const p = path.join(EVENTS_DIR, n);
+    const st = safeStat(p);
+    if (!st) continue;
+    let f = logFiles.get(p) || { offset: 0, rest: '' };
+    if (st.size < f.offset) f = { offset: 0, rest: '' };
+    if (st.size > f.offset) {
+      const len = st.size - f.offset;
+      const buf = Buffer.alloc(len);
+      const fd = fs.openSync(p, 'r');
+      try { fs.readSync(fd, buf, 0, len, f.offset); } finally { fs.closeSync(fd); }
+      f.offset = st.size;
+      const lines = (f.rest + buf.toString('utf8')).split('\n');
+      f.rest = lines.pop();
+      for (const line of lines) {
+        if (!line) continue;
+        try { ingest(JSON.parse(line)); changed = true; } catch {}
+      }
+    }
+    logFiles.set(p, f);
+  }
+  return changed;
+}
+
+function deriveFromEvents(events) {
+  const st = {
+    status: 'idle', since: null, lastTs: 0, prompt: null, autoPrompt: null, activity: null,
+    wrap: null, ask: null, perm: null, last: null, error: null, model: null,
+    subagents: new Map(), turnStart: null,
+  };
+  const set = (status, ts) => { if (st.status !== status) { st.status = status; st.since = ts; } };
+
+  for (const e of events) {
+    st.lastTs = Math.max(st.lastTs, e.ts);
+    if (e.aid) {
+      if (e.ev === 'SubagentStart') st.subagents.set(e.aid, { type: e.atype || 'agent', ts: e.ts, activity: null });
+      else if (e.ev === 'SubagentStop') st.subagents.delete(e.aid);
+      else if (e.ev === 'PreToolUse') {
+        const a = st.subagents.get(e.aid) || { type: e.atype || 'agent', ts: e.ts };
+        a.activity = { tool: e.tool, sum: e.sum || '', ts: e.ts };
+        st.subagents.set(e.aid, a);
+      }
+      continue;
+    }
+    switch (e.ev) {
+      case 'SessionStart':
+        if (e.model) st.model = e.model;
+        if (st.status === 'ended') set('idle', e.ts);
+        if (!st.since) st.since = e.ts;
+        break;
+      case 'UserPromptSubmit': {
+        const text = e.prompt || '';
+        if (isAutomated(text)) {
+          // Only counts as work once Claude actually responds to it.
+          st.autoPrompt = { text: automatedLabel(text), ts: e.ts };
+          st.autoTurn = true;
+          break;
+        }
+        st.prompt = { text: cleanPrompt(text), ts: e.ts };
+        st.autoPrompt = null;
+        st.autoTurn = false;
+        st.turnStart = e.ts;
+        st.wrap = st.ask = st.perm = st.last = st.error = st.activity = null;
+        set('working', e.ts);
+        break;
+      }
+      case 'PreToolUse':
+        if (st.autoTurn) {
+          st.autoTurn = false;
+          st.turnStart = e.ts;
+          st.wrap = st.ask = st.last = st.error = null;
+        }
+        if (QUESTION_TOOLS.has(e.tool)) {
+          st.ask = { ...askFromTool(e.tool, e.input), tuid: e.tuid, ts: e.ts };
+          set('question', e.ts);
+        } else if (e.tool === WRAP_TOOL) {
+          st.wrap = { ...(e.input || {}), ts: e.ts };
+        } else {
+          st.activity = { tool: e.tool, sum: e.sum || '', ts: e.ts };
+          st.perm = null;
+          if (st.status !== 'question' || !st.ask) set('working', e.ts);
+        }
+        break;
+      case 'PermissionRequest':
+        st.perm = { tool: e.tool, sum: e.sum || '', ts: e.ts };
+        set('permission', e.ts);
+        break;
+      case 'Notification':
+        if (e.ntype === 'permission_prompt') {
+          if (!st.perm) st.perm = { tool: null, sum: e.msg || '', ts: e.ts };
+          set('permission', e.ts);
+        } else if (e.ntype === 'elicitation_dialog') {
+          st.ask = { kind: 'elicitation', text: e.msg || 'Een MCP-server vraagt om invoer', options: [], ts: e.ts };
+          set('question', e.ts);
+        }
+        break;
+      case 'PostToolUse':
+      case 'PostToolUseFailure':
+      case 'PermissionDenied':
+        if (st.ask && st.ask.tuid && st.ask.tuid === e.tuid) st.ask = null;
+        st.perm = null;
+        if ((st.status === 'question' && !st.ask) || st.status === 'permission') set('working', e.ts);
+        break;
+      case 'Stop': {
+        if (st.autoTurn) { st.autoTurn = false; st.wrap = null; if (st.ask && !st.ask.tuid) st.ask = null; }
+        st.last = e.last ? { text: e.last, ts: e.ts } : st.last;
+        st.perm = null;
+        st.activity = null;
+        if (st.ask && st.ask.tuid) { set('question', e.ts); break; }
+        const q = questionFromTurn(st.wrap, e.last);
+        if (q) { st.ask = { ...q, ts: e.ts }; set('question', e.ts); }
+        else { st.ask = null; set('done', e.ts); }
+        break;
+      }
+      case 'StopFailure':
+        st.error = { text: e.error || 'Onbekende fout', details: e.details || null, ts: e.ts };
+        set('error', e.ts);
+        break;
+      case 'SessionEnd':
+        set('ended', e.ts);
+        break;
+    }
+  }
+  return st;
+}
+
+// ---------------------------------------------------------------- transcripts
+
+const tailCache = new Map(); // file -> { size, mtimeMs, entries }
+
+function readTail(file) {
+  const c = tailCache.get(file);
+  if (c && Date.now() - c.checkedAt < 3000) return c;
+  const st = safeStat(file);
+  if (!st) return null;
+  if (c && c.size === st.size && c.mtimeMs === st.mtimeMs) { c.checkedAt = Date.now(); return c; }
+  const start = Math.max(0, st.size - TAIL_BYTES);
+  const len = st.size - start;
+  const buf = Buffer.alloc(len);
+  const fd = fs.openSync(file, 'r');
+  try { fs.readSync(fd, buf, 0, len, start); } finally { fs.closeSync(fd); }
+  const lines = buf.toString('utf8').split('\n');
+  if (start > 0) lines.shift();
+  const entries = [];
+  for (const line of lines) {
+    if (!line || line.length > 400000) continue;
+    try { entries.push(JSON.parse(line)); } catch {}
+  }
+  const out = { size: st.size, mtimeMs: st.mtimeMs, checkedAt: Date.now(), entries, derived: null };
+  tailCache.set(file, out);
+  return out;
+}
+
+function userText(msg) {
+  const c = msg && msg.content;
+  if (typeof c === 'string') return c;
+  if (!Array.isArray(c)) return null;
+  if (c.some((x) => x && x.type === 'tool_result')) return null;
+  const t = c.filter((x) => x && x.type === 'text').map((x) => x.text).join('\n');
+  return t || null;
+}
+
+function deriveFromTranscript(tail) {
+  if (tail.derived) return tail.derived;
+  const st = {
+    status: 'idle', since: null, lastTs: 0, prompt: null, autoPrompt: null, activity: null,
+    wrap: null, ask: null, perm: null, last: null, error: null, model: null,
+    title: null, lastPrompt: null, cwd: null, interruptedAt: null, entry: null,
+  };
+  const set = (status, ts) => { if (st.status !== status) { st.status = status; st.since = ts; } };
+
+  for (const e of tail.entries) {
+    if (e.type === 'custom-title' && e.customTitle) st.title = e.customTitle;
+    if (e.type === 'last-prompt' && e.lastPrompt) st.lastPrompt = e.lastPrompt;
+    if (e.cwd) st.cwd = e.cwd;
+    if (e.entrypoint) st.entry = e.entrypoint;
+    if (e.isSidechain) continue;
+    const ts = e.timestamp ? Date.parse(e.timestamp) : null;
+    if (ts) st.lastTs = Math.max(st.lastTs, ts);
+
+    if (e.type === 'user' && e.message) {
+      const text = userText(e.message);
+      if (text != null) {
+        if (e.isMeta || e.isCompactSummary) continue;
+        if (/^\[Request interrupted by user/.test(text)) {
+          st.interruptedAt = ts;
+          st.activity = null;
+          set('interrupted', ts);
+          continue;
+        }
+        if (isAutomated(text)) {
+          st.autoPrompt = { text: automatedLabel(text), ts };
+          st.autoTurn = true;
+          continue;
+        }
+        st.prompt = { text: cleanPrompt(text), ts };
+        st.autoPrompt = null;
+        st.autoTurn = false;
+        st.wrap = st.ask = st.last = st.error = st.activity = st.interruptedAt = null;
+        set('working', ts);
+      } else {
+        for (const c of e.message.content || []) {
+          if (c && c.type === 'tool_result' && st.ask && st.ask.tuid === c.tool_use_id) st.ask = null;
+        }
+        if (st.status === 'question' && !st.ask) set('working', ts);
+      }
+    } else if (e.type === 'assistant' && e.message) {
+      const m = e.message;
+      if (m.model && !st.model) st.model = m.model;
+      if (st.autoTurn) {
+        st.autoTurn = false;
+        st.wrap = st.ask = st.last = st.error = st.interruptedAt = null;
+        set('working', ts);
+      }
+      const texts = [];
+      for (const c of m.content || []) {
+        if (!c) continue;
+        if (c.type === 'text' && c.text) texts.push(c.text);
+        if (c.type === 'tool_use') {
+          if (QUESTION_TOOLS.has(c.name)) {
+            st.ask = { ...askFromTool(c.name, c.input), tuid: c.id, ts };
+            set('question', ts);
+          } else if (c.name === WRAP_TOOL) {
+            st.wrap = { ...(c.input || {}), ts };
+          } else {
+            const i = c.input || {};
+            const sum = i.command || i.description || i.file_path || i.path || i.pattern || i.url || i.query || '';
+            st.activity = { tool: c.name, sum: clip(String(sum).replace(/\s+/g, ' '), 160), ts };
+            if (st.status !== 'question') set('working', ts);
+          }
+        }
+      }
+      if (m.stop_reason === 'end_turn') {
+        if (texts.length) st.last = { text: texts.join('\n\n'), ts };
+        st.activity = null;
+        if (st.ask && st.ask.tuid) set('question', ts);
+        else {
+          const q = questionFromTurn(st.wrap, st.last && st.last.text);
+          if (q) { st.ask = { ...q, ts }; set('question', ts); }
+          else set('done', ts);
+        }
+      }
+    } else if (e.type === 'system' && e.subtype === 'api_error') {
+      st.error = { text: clip(String(e.content || e.error || 'API-fout'), 300), ts };
+    }
+  }
+  tail.derived = st;
+  return st;
+}
+
+let transcriptIndex = new Map(); // sid -> { file, mtimeMs }
+let transcriptScanAt = 0;
+
+function scanTranscripts() {
+  const now = Date.now();
+  if (now - transcriptScanAt < 4000) return;
+  transcriptScanAt = now;
+  const next = new Map();
+  let dirs = [];
+  try { dirs = fs.readdirSync(PROJECTS_DIR); } catch {}
+  for (const d of dirs) {
+    const dp = path.join(PROJECTS_DIR, d);
+    let files = [];
+    try { files = fs.readdirSync(dp); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.jsonl')) continue;
+      const fp = path.join(dp, f);
+      const st = safeStat(fp);
+      if (!st || now - st.mtimeMs > KEEP_MS) continue;
+      next.set(f.slice(0, -6), { file: fp, mtimeMs: st.mtimeMs });
+    }
+  }
+  transcriptIndex = next;
+}
+
+// ---------------------------------------------------------------- desktop app
+
+const desktopFiles = new Map(); // file -> { mtimeMs, meta }
+let desktopByCli = new Map();
+let desktopScanAt = 0;
+
+function scanDesktop() {
+  const now = Date.now();
+  if (now - desktopScanAt < 5000) return;
+  desktopScanAt = now;
+  const seen = new Set();
+  let accounts = [];
+  try { accounts = fs.readdirSync(DESKTOP_DIR); } catch { return; }
+  for (const a of accounts) {
+    let orgs = [];
+    try { orgs = fs.readdirSync(path.join(DESKTOP_DIR, a)); } catch { continue; }
+    for (const o of orgs) {
+      const dir = path.join(DESKTOP_DIR, a, o);
+      let files = [];
+      try { files = fs.readdirSync(dir); } catch { continue; }
+      for (const f of files) {
+        if (!/^local_.*\.json$/.test(f)) continue;
+        const fp = path.join(dir, f);
+        seen.add(fp);
+        const st = safeStat(fp);
+        if (!st) continue;
+        const cached = desktopFiles.get(fp);
+        if (cached && cached.mtimeMs === st.mtimeMs) continue;
+        try {
+          const d = JSON.parse(fs.readFileSync(fp, 'utf8'));
+          desktopFiles.set(fp, {
+            mtimeMs: st.mtimeMs,
+            meta: {
+              localId: d.sessionId,
+              cliIds: [d.cliSessionId, d.lastAssistantCliSessionId, ...(d.priorCliSessionIds || [])].filter(Boolean),
+              title: d.title || null,
+              archived: !!d.isArchived,
+              cwd: d.cwd || null,
+              lastActivityAt: d.lastActivityAt || 0,
+              lastUserAt: d.latestUserFrameAt || 0,
+              summary: d.postTurnSummary || null,
+              model: d.model || null,
+            },
+          });
+        } catch {}
+      }
+    }
+  }
+  for (const fp of desktopFiles.keys()) if (!seen.has(fp)) desktopFiles.delete(fp);
+  const byCli = new Map();
+  for (const { meta } of desktopFiles.values()) {
+    for (const id of meta.cliIds) {
+      const prev = byCli.get(id);
+      if (!prev || prev.lastActivityAt < meta.lastActivityAt) byCli.set(id, meta);
+    }
+  }
+  desktopByCli = byCli;
+}
+
+// ---------------------------------------------------------------- state
+
+const STATUS_RANK = { permission: 0, question: 1, working: 2, error: 3, interrupted: 4, stale: 5, done: 6, idle: 7, ended: 8 };
+
+function buildSession(sid) {
+  const ev = eventSessions.get(sid);
+  const tr = transcriptIndex.get(sid);
+  const desk = desktopByCli.get(sid) || null;
+  const tpFile = (ev && ev.tp) || (tr && tr.file) || null;
+  const hookSt = ev && ev.events.length ? deriveFromEvents(ev.events) : null;
+  // A hook session only needs its transcript for what the hooks missed.
+  const needTranscript = !hookSt || !hookSt.prompt || !hookSt.last ||
+    (hookSt.status === 'working' && Date.now() - hookSt.lastTs > CHECK_INTERRUPT_MS);
+  const tail = tpFile && needTranscript ? readTail(tpFile) : null;
+  const fromTr = tail ? deriveFromTranscript(tail) : null;
+
+  let st;
+  let source;
+  if (hookSt) {
+    st = hookSt;
+    source = 'hooks';
+    // Hooks only started at install time: borrow what they missed.
+    if (fromTr) {
+      if (!st.prompt && fromTr.prompt) st.prompt = fromTr.prompt;
+      if (!st.prompt && fromTr.lastPrompt && !isAutomated(fromTr.lastPrompt)) {
+        st.prompt = { text: cleanPrompt(fromTr.lastPrompt), ts: null };
+      }
+      if (!st.last && fromTr.last) st.last = fromTr.last;
+      if (!st.model && fromTr.model) st.model = fromTr.model;
+      // Running since before the hooks: the transcript knows when it started.
+      if (!st.turnStart && fromTr.status === st.status && fromTr.since) st.since = Math.min(st.since || Infinity, fromTr.since);
+      // Escape in the app ends a turn without a Stop hook.
+      if (st.status === 'working' && fromTr.interruptedAt && fromTr.interruptedAt >= (st.turnStart || 0)) {
+        st.status = 'interrupted';
+        st.since = fromTr.interruptedAt;
+      }
+    }
+  } else if (fromTr) {
+    st = { ...fromTr };
+    if (!st.prompt && fromTr.lastPrompt && !isAutomated(fromTr.lastPrompt)) {
+      st.prompt = { text: cleanPrompt(fromTr.lastPrompt), ts: null };
+    }
+    source = 'transcript';
+  } else {
+    return null;
+  }
+
+  // Real message times only: the app keeps touching transcript files (cost,
+  // title) long after the last message, so file dates overstate activity.
+  const lastTs = Math.max(st.lastTs || 0, (fromTr && fromTr.lastTs) || 0) ||
+    (tail && tail.mtimeMs) || (tr && tr.mtimeMs) || 0;
+  let status = st.status;
+  let since = st.since || lastTs;
+  // A permission prompt in the middle of a turn should not restart its clock.
+  if (status === 'working' && st.turnStart) since = st.turnStart;
+  // Turn began before what hooks or the transcript tail can see: the desktop
+  // app records when your last message came in.
+  if (status === 'working' && !st.turnStart && desk && desk.lastUserAt && desk.lastUserAt < since) since = desk.lastUserAt;
+  if (status === 'working' && Date.now() - lastTs > STALE_MS) status = 'stale';
+  if (status === 'idle' && !st.prompt && !st.last && source === 'transcript') status = 'done';
+
+  const cwd = (ev && ev.cwd) || (fromTr && fromTr.cwd) || (desk && desk.cwd) || null;
+  const project = projectFromCwd(cwd);
+  const promptText = st.prompt && st.prompt.text;
+  const title = (desk && desk.title) || (fromTr && fromTr.title) ||
+    (promptText ? clip(promptText.split('\n')[0], 70) : null) ||
+    (fromTr && fromTr.lastPrompt ? clip(fromTr.lastPrompt, 70) : null) || project.name;
+  const entry = (ev && ev.ep) || (fromTr && fromTr.entry) || (desk ? 'claude-desktop' : null);
+  const isDesktop = !!desk || /desktop/.test(entry || '');
+
+  let question = null;
+  if (status === 'question' && st.ask) {
+    question = {
+      kind: st.ask.kind, text: st.ask.text, options: st.ask.options || [], parts: st.ask.parts || null,
+      context: st.ask.context || null, ts: st.ask.ts || st.since,
+    };
+  } else if (status === 'permission') {
+    const p = st.perm || {};
+    question = {
+      kind: 'permission',
+      text: p.tool ? `Mag Claude ${p.tool} gebruiken?` : (p.sum || 'Claude vraagt toestemming'),
+      tool: p.tool || null, detail: p.tool ? p.sum : null, options: [], context: null, ts: p.ts || st.since,
+    };
+  }
+
+  const recap = st.wrap && st.wrap.recap ? st.wrap.recap : (desk && desk.summary && desk.summary.status_detail) || null;
+
+  return {
+    id: sid,
+    localId: desk ? desk.localId : null,
+    openUrl: desk ? `claude://code/continue?session=${encodeURIComponent(desk.localId)}&source=ai-flows` : null,
+    resumeCmd: !isDesktop ? `cd ${JSON.stringify(cwd || HOME)} && claude --resume ${sid}` : null,
+    title,
+    project: project.name,
+    projectDetail: project.detail,
+    cwd,
+    app: isDesktop ? 'Claude-app' : 'Terminal',
+    archived: desk ? desk.archived : false,
+    status,
+    since,
+    lastTs,
+    prompt: st.prompt ? { text: clip(st.prompt.text, 600), ts: st.prompt.ts } : null,
+    autoPrompt: st.autoPrompt || null,
+    activity: st.activity,
+    last: st.last ? { text: clip(st.last.text, 1500), ts: st.last.ts } : null,
+    recap,
+    question,
+    error: st.error,
+    model: st.model || (desk && desk.model) || null,
+    subagents: st.subagents ? [...st.subagents.values()].map((a) => ({ type: a.type, activity: a.activity || null })) : [],
+    source,
+  };
+}
+
+function computeState(windowMin) {
+  readHookLog();
+  scanTranscripts();
+  scanDesktop();
+  const now = Date.now();
+  const windowMs = Math.max(5, Math.min(windowMin, 24 * 60)) * MINUTE;
+
+  for (const [sid, s] of eventSessions) {
+    const last = s.events.length ? s.events[s.events.length - 1].ts : 0;
+    if (now - last > KEEP_MS) eventSessions.delete(sid);
+  }
+  for (const f of tailCache.keys()) {
+    if (![...transcriptIndex.values()].some((t) => t.file === f) &&
+        ![...eventSessions.values()].some((s) => s.tp === f)) tailCache.delete(f);
+  }
+
+  const ids = new Set([...eventSessions.keys(), ...transcriptIndex.keys()]);
+  const sessions = [];
+  for (const sid of ids) {
+    let s;
+    try { s = buildSession(sid); } catch (err) { console.error('session', sid, err.message); continue; }
+    if (!s) continue;
+    const live = s.status === 'working' || s.status === 'permission';
+    if (s.archived && !live) continue;
+    if (now - s.lastTs > (live ? KEEP_MS : windowMs)) continue;
+    sessions.push(s);
+  }
+  // Order by when a session entered its status, not by its last event: that
+  // one changes on every tool call and made busy sessions swap places.
+  sessions.sort((a, b) => (STATUS_RANK[a.status] - STATUS_RANK[b.status]) || (b.since - a.since) || a.id.localeCompare(b.id));
+  return {
+    now,
+    // Changes when the page's own files change, so open dashboards reload.
+    build: Math.max(...['index.html', 'app.js', 'app.css'].map((f) => (safeStat(path.join(PUBLIC_DIR, f)) || {}).mtimeMs || 0)),
+    windowMin: windowMs / MINUTE,
+    hooksSeen: eventSessions.size > 0,
+    notify: settings.notify,
+    notifier: notifierAvailable(),
+    sessions,
+  };
+}
+
+// ---------------------------------------------------------------- http
+
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
+
+function sendJson(res, obj) {
+  const body = JSON.stringify(obj);
+  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(body);
+}
+
+const streams = new Set(); // { res, windowMin, lastBody }
+
+function pushStreams() {
+  const byWindow = new Map();
+  for (const c of streams) {
+    let body = byWindow.get(c.windowMin);
+    if (body === undefined) {
+      const { now, ...rest } = computeState(c.windowMin);
+      body = JSON.stringify(rest);
+      byWindow.set(c.windowMin, body);
+    }
+    if (body !== c.lastBody) {
+      c.lastBody = body;
+      c.res.write(`data: ${body}\n\n`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------- notifications
+
+// macOS notifications come from notifier/AI Flows.app (build it with
+// notifier/build.sh). A question is announced once it has been open for a few
+// seconds, and its notification is withdrawn again once it is answered.
+const NOTIFIER_APP = path.join(__dirname, 'notifier', 'AI Flows.app');
+const SETTINGS_FILE = path.join(EVENTS_DIR, 'settings.json');
+const NOTIFY_GRACE_MS = 4000;
+
+function loadSettings() {
+  try { return { notify: true, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) }; } catch { return { notify: true }; }
+}
+let settings = loadSettings();
+
+function saveSettings() {
+  fs.mkdirSync(EVENTS_DIR, { recursive: true });
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + '\n');
+}
+
+function notifierAvailable() {
+  return fs.existsSync(path.join(NOTIFIER_APP, 'Contents', 'MacOS', 'AI Flows'));
+}
+
+function runNotifier(args) {
+  if (process.env.AI_FLOWS_DRY_OPEN) { console.log('notify (dry run):', JSON.stringify(args)); return; }
+  execFile('/usr/bin/open', ['-n', '-g', '-a', NOTIFIER_APP, '--args', ...args], () => {});
+}
+
+const questionKey = (s) => `${s.id}|${s.question.kind}|${s.question.ts || ''}`;
+
+function announceQuestion(s, key) {
+  const q = s.question;
+  const id = 'q-' + crypto.createHash('sha1').update(key).digest('hex').slice(0, 16);
+  const perm = q.kind === 'permission';
+  const body = perm && q.detail ? `${q.tool ? q.tool + ': ' : ''}${q.detail}` : q.text;
+  runNotifier([
+    '--id', id,
+    '--title', s.title,
+    '--subtitle', `${perm ? 'Toestemming nodig' : 'Vraag'} · ${s.project}`,
+    '--body', clip(String(body).replace(/\s+/g, ' '), 240),
+    '--url', s.openUrl || `http://localhost:${PORT}/`,
+    '--thread', s.id,
+  ]);
+  return id;
+}
+
+const announced = new Map(); // question key -> { firstSeen, sentId, skip }
+let notifyPrimed = false;
+
+function checkQuestions() {
+  if (!notifierAvailable()) return;
+  let state;
+  try { state = computeState(120); } catch { return; }
+  const now = Date.now();
+  const open = new Map();
+  for (const s of state.sessions) {
+    if (s.question && (s.status === 'question' || s.status === 'permission')) open.set(questionKey(s), s);
+  }
+  // Questions already open when the server starts were seen before: no pop-up.
+  if (!notifyPrimed) {
+    for (const k of open.keys()) announced.set(k, { firstSeen: now, sentId: null, skip: true });
+    notifyPrimed = true;
+    return;
+  }
+  for (const [k, s] of open) {
+    let a = announced.get(k);
+    if (!a) announced.set(k, (a = { firstSeen: now, sentId: null, skip: false }));
+    if (!a.skip && !a.sentId && settings.notify && now - a.firstSeen >= NOTIFY_GRACE_MS) a.sentId = announceQuestion(s, k);
+  }
+  for (const [k, a] of announced) {
+    if (open.has(k)) continue;
+    if (a.sentId) runNotifier(['--remove', a.sentId]);
+    announced.delete(k);
+  }
+}
+
+setInterval(checkQuestions, 2000);
+
+function readJson(req) {
+  return new Promise((resolve) => {
+    let data = '';
+    req.on('data', (c) => { data += c; if (data.length > 10000) req.destroy(); });
+    req.on('end', () => { try { resolve(JSON.parse(data || '{}')); } catch { resolve({}); } });
+  });
+}
+
+async function handleSettings(req, res) {
+  if (req.method === 'POST') {
+    if (req.headers['x-ai-flows'] !== '1') { res.writeHead(403); return res.end(); }
+    const body = await readJson(req);
+    if (typeof body.notify === 'boolean') {
+      settings.notify = body.notify;
+      saveSettings();
+      if (body.notify && notifierAvailable()) {
+        runNotifier(['--id', 'ai-flows-test', '--title', 'AI Flows', '--subtitle', 'Meldingen staan aan',
+          '--body', 'Je krijgt hier een melding zodra een sessie iets van je nodig heeft.',
+          '--url', `http://localhost:${PORT}/`]);
+      }
+    }
+  }
+  sendJson(res, { ...settings, notifier: notifierAvailable() });
+}
+
+// Open a session in the Claude app from here, so the browser never has to ask
+// whether it may launch the app.
+function openSession(req, res, sid) {
+  // A cross-site page cannot send this header without a CORS preflight, which
+  // this server never answers.
+  if (req.method !== 'POST' || req.headers['x-ai-flows'] !== '1') {
+    res.writeHead(403);
+    return res.end();
+  }
+  scanDesktop();
+  const desk = desktopByCli.get(sid);
+  if (!desk || !/^local_[A-Za-z0-9-]{1,64}$/.test(desk.localId || '')) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    return res.end('{"ok":false}');
+  }
+  const link = `claude://code/continue?session=${desk.localId}&source=ai-flows`;
+  if (process.env.AI_FLOWS_DRY_OPEN) {
+    console.log('open (dry run):', link);
+    return sendJson(res, { ok: true, dryRun: true, link });
+  }
+  execFile('/usr/bin/open', [link], (err) => sendJson(res, { ok: !err }));
+}
+
+const server = http.createServer((req, res) => {
+  // Only answer to localhost names: keeps other websites out via DNS rebinding.
+  if (!/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(req.headers.host || '')) {
+    res.writeHead(403);
+    return res.end();
+  }
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const windowMin = Number(url.searchParams.get('window')) || 120;
+
+  if (url.pathname === '/api/state') return sendJson(res, computeState(windowMin));
+  if (url.pathname === '/api/open') return openSession(req, res, url.searchParams.get('id'));
+  if (url.pathname === '/api/settings') return handleSettings(req, res);
+
+  if (url.pathname === '/api/stream') {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+    res.write('retry: 2000\n\n');
+    const c = { res, windowMin, lastBody: null };
+    streams.add(c);
+    pushStreams();
+    req.on('close', () => streams.delete(c));
+    return;
+  }
+
+  let file = url.pathname === '/' ? '/index.html' : url.pathname;
+  file = path.normalize(file).replace(/^(\.\.[/\\])+/, '');
+  const fp = path.join(PUBLIC_DIR, file);
+  if (!fp.startsWith(PUBLIC_DIR)) { res.writeHead(403); return res.end(); }
+  fs.readFile(fp, (err, data) => {
+    if (err) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('Niet gevonden'); }
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(fp)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+    res.end(data);
+  });
+});
+
+setInterval(() => { if (streams.size) pushStreams(); }, 1000);
+setInterval(() => { for (const c of streams) c.res.write(': ping\n\n'); }, 20000);
+
+server.listen(PORT, HOST, () => {
+  console.log(`AI Flows draait op http://localhost:${PORT}`);
+  console.log(`Hook-log: ${EVENTS_DIR}`);
+});

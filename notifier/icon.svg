@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Icon system: #0042FF tile, white primary stroke 32, landscape keyline. macOS rounds the corners itself. -->
+  <rect width="256" height="256" fill="#0042FF"/>
+  <path d="M48 128c20-48 60-48 80 0s60 48 80 0" fill="none" stroke="#fff" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

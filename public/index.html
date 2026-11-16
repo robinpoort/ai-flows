@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Flows</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b5bd6'/%3E%3Cpath d='M8 20c3-8 5-8 8 0s5 8 8 0' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 32 32"><path d="M7 20c3-8 6-8 9 0s6 8 9 0" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
+      </span>
+      <div>
+        <h1>AI Flows</h1>
+        <p class="live" id="live"><span class="live-dot"></span><span id="live-text">Verbinden…</span></p>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="segmented" role="radiogroup" aria-label="Hoe ver terug" id="window">
+        <button type="button" role="radio" data-min="30">30 min</button>
+        <button type="button" role="radio" data-min="120">2 uur</button>
+        <button type="button" role="radio" data-min="480">8 uur</button>
+        <button type="button" role="radio" data-min="1440">24 uur</button>
+      </div>
+      <button type="button" class="bell" id="open-mini" title="Open een klein los venster met alleen de kern">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="11.5" y="11.5" width="6" height="5" rx="1.2" fill="currentColor"/></svg>
+        <span>Mini-venster</span>
+      </button>
+      <button type="button" class="bell" id="bell" aria-pressed="false" title="Melding bij een nieuwe vraag">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15L6 16Z M10 20a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        <span id="bell-text">Meldingen uit</span>
+      </button>
+    </div>
+  </header>
+
+  <nav class="tabs" aria-label="Weergave">
+    <button type="button" data-tab="questions" class="active">Vragen <span class="count" data-count="questions">0</span></button>
+    <button type="button" data-tab="flows">Flows <span class="count" data-count="flows">0</span></button>
+  </nav>
+
+  <div class="notice" id="notice" hidden></div>
+
+  <main class="layout">
+    <section class="panel questions" id="questions" aria-labelledby="q-title">
+      <div class="panel-head">
+        <h2 id="q-title">Vragen voor jou</h2>
+        <span class="count big" data-count="questions">0</span>
+      </div>
+      <p class="hint">Klik een antwoord: het wordt gekopieerd en de sessie gaat open in Claude. Plak het daar met ⌘V.</p>
+      <div class="list" id="question-list"></div>
+      <div class="empty" id="question-empty" hidden>
+        <svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20" fill="none" stroke="currentColor" stroke-width="2.5"/><path d="M15 24.5l6 6 12-13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <strong>Geen open vragen</strong>
+        <span>Zodra een AI-sessie iets van je nodig heeft, staat het hier.</span>
+      </div>
+    </section>
+
+    <section class="panel flows" id="flows" aria-labelledby="f-title">
+      <div class="panel-head">
+        <h2 id="f-title">Flows</h2>
+        <span class="sub" id="flows-sub"></span>
+      </div>
+      <div id="flow-groups"></div>
+      <div class="empty" id="flow-empty" hidden>
+        <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M8 30c5-14 10-14 16 0s11 14 16 0" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
+        <strong>Rustig</strong>
+        <span>Geen sessies actief in deze periode. Kies hierboven een langere periode.</span>
+      </div>
+    </section>
+  </main>
+
+  <section class="mini" id="mini" aria-label="AI Flows mini">
+    <div class="mini-head">
+      <span class="mini-logo" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M7 20c3-8 6-8 9 0s6 8 9 0" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/></svg></span>
+      <span class="mini-sum" id="mini-sum">Verbinden…</span>
+      <span class="mini-live" id="mini-live" title="Verbinding"></span>
+      <button type="button" class="mini-expand" id="mini-expand" title="Volledig dashboard openen" aria-label="Volledig dashboard openen">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div class="mini-micro" aria-hidden="true">
+      <div class="micro q"><strong data-count="questions">0</strong><span>vragen</span></div>
+      <div class="micro w"><strong data-count="working">0</strong><span>bezig</span></div>
+    </div>
+    <div class="mini-body">
+      <div class="mini-label" id="mini-q-label">Vragen</div>
+      <div class="mini-list" id="mini-questions"></div>
+      <div class="mini-none" id="mini-q-none">Geen open vragen</div>
+      <div class="mini-label" id="mini-f-label">Flows</div>
+      <div class="mini-list" id="mini-flows"></div>
+      <div class="mini-none" id="mini-f-none">Niets actief</div>
+    </div>
+  </section>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,641 @@
+(() => {
+  'use strict';
+
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  // Write only when the value changed, so idle updates leave the page alone.
+  const setText = (el, v) => { v = String(v); if (el.textContent !== v) el.textContent = v; };
+  const setHTML = (el, v) => { if (el.dataset.html !== v) { el.dataset.html = v; el.innerHTML = v; } };
+  const setHidden = (el, v) => { if (el.hidden !== v) el.hidden = v; };
+  const setTitle = (el, v) => { if (el.title !== v) el.title = v; };
+
+  const store = {
+    get(key, fallback) {
+      try { const v = localStorage.getItem('ai-flows:' + key); return v == null ? fallback : JSON.parse(v); } catch { return fallback; }
+    },
+    set(key, value) {
+      try { localStorage.setItem('ai-flows:' + key, JSON.stringify(value)); } catch {}
+    },
+  };
+
+  const STATUS = {
+    working: { label: 'Bezig', cls: 'working' },
+    permission: { label: 'Toestemming nodig', cls: 'permission' },
+    question: { label: 'Wacht op jou', cls: 'question' },
+    done: { label: 'Klaar', cls: 'done' },
+    idle: { label: 'Gestart', cls: 'idle' },
+    interrupted: { label: 'Onderbroken', cls: 'idle' },
+    stale: { label: 'Stil', cls: 'stale' },
+    error: { label: 'Fout', cls: 'error' },
+    ended: { label: 'Afgesloten', cls: 'idle' },
+  };
+
+  const GROUPS = [
+    { key: 'waiting', title: 'Wacht op jou', match: (s) => s.status === 'question' || s.status === 'permission' },
+    { key: 'working', title: 'Nu bezig', match: (s) => s.status === 'working' },
+    { key: 'attention', title: 'Even kijken', match: (s) => ['error', 'stale', 'interrupted'].includes(s.status) },
+    { key: 'done', title: 'Recent klaar', match: (s) => ['done', 'idle', 'ended'].includes(s.status) },
+  ];
+
+  const QUESTION_KIND = {
+    wrap: 'Vraag',
+    text: 'Vraag in het antwoord',
+    ask: 'Keuzevraag',
+    plan: 'Plan goedkeuren',
+    permission: 'Toestemming',
+    elicitation: 'Invoer gevraagd',
+  };
+
+  const TOOL_NAMES = {
+    Bash: 'Terminal', Read: 'Lezen', Edit: 'Bewerken', MultiEdit: 'Bewerken', Write: 'Schrijven',
+    Grep: 'Zoeken', Glob: 'Bestanden zoeken', WebFetch: 'Webpagina', WebSearch: 'Webzoeken',
+    Agent: 'Subagent', Task: 'Subagent', Skill: 'Skill', ToolSearch: 'Tools laden', Monitor: 'Wachten',
+    NotebookEdit: 'Notebook', Artifact: 'Artifact', SendUserFile: 'Bestand sturen', Workflow: 'Workflow',
+  };
+
+  let windowMin = store.get('window', 120);
+  let tab = store.get('tab', 'questions');
+  let state = null;
+  let es = null;
+  let connected = false;
+  let knownQuestions = null;
+  let bootBuild = null;
+  const expanded = new Set();
+  const htmlCache = new Map();
+
+  // ---------------------------------------------------------------- text
+
+  function plain(md) {
+    return String(md || '')
+      .replace(/```[\s\S]*?```/g, '[code]')
+      .replace(/\*\*(.+?)\*\*/g, '$1')
+      .replace(/__(.+?)__/g, '$1')
+      .replace(/`([^`\n]+)`/g, '$1')
+      .replace(/^#{1,6}\s+/gm, '')
+      .replace(/^\s*[-*]\s+/gm, '• ')
+      .replace(/^\|.*\|\s*$/gm, (l) => (/^\|[\s:|-]+\|$/.test(l) ? '' : l.replace(/^\||\|$/g, '').replace(/\s*\|\s*/g, ' · ').trim()))
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  function toolName(tool) {
+    if (!tool) return 'Bezig';
+    if (TOOL_NAMES[tool]) return TOOL_NAMES[tool];
+    if (/^mcp__claude-in-chrome__/.test(tool)) return 'Chrome';
+    if (/^mcp__Claude_Browser__/.test(tool)) return 'Browser';
+    if (/^mcp__ccd_/.test(tool)) return 'Claude-app';
+    const m = tool.match(/^mcp__[^_]+(?:_[^_]+)*?__(.+)$/);
+    return m ? m[1].replace(/_/g, ' ') : tool;
+  }
+
+  function shortPath(s) {
+    return String(s || '').replace(/\/Users\/[^/\s]+/g, '~');
+  }
+
+  function ago(ts) {
+    const m = Math.floor(Math.max(0, Date.now() - ts) / 60000);
+    if (m < 1) return 'zojuist';
+    if (m < 60) return `${m} min geleden`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h} u${m % 60 ? ' ' + (m % 60) + ' min' : ''} geleden`;
+    return `${Math.floor(h / 24)} d geleden`;
+  }
+
+  function compact(ts) {
+    const m = Math.floor(Math.max(0, Date.now() - ts) / 60000);
+    if (m < 1) return 'nu';
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    return h < 24 ? `${h}u` : `${Math.floor(h / 24)}d`;
+  }
+
+  function dur(ts) {
+    const m = Math.floor(Math.max(0, Date.now() - ts) / 60000);
+    if (m < 1) return '<1 min';
+    if (m < 60) return `${m} min`;
+    const h = Math.floor(m / 60);
+    return `${h} u${m % 60 ? ' ' + (m % 60) + ' min' : ''}`;
+  }
+
+  // Time labels are filled in after render so cached card HTML stays stable.
+  function timeEl(ts, mode, prefix = '') {
+    return `<span class="time" data-ts="${Number(ts) || 0}" data-mode="${mode}" data-prefix="${esc(prefix)}"></span>`;
+  }
+
+  function updateTimes(root = document) {
+    for (const el of $$('[data-ts]', root)) {
+      const ts = Number(el.dataset.ts);
+      if (!ts) { setText(el, ''); continue; }
+      const text = el.dataset.mode === 'dur' ? dur(ts) : el.dataset.mode === 'compact' ? compact(ts) : ago(ts);
+      setText(el, (el.dataset.prefix ? el.dataset.prefix + ' ' : '') + text);
+      const title = new Date(ts).toLocaleString('nl-NL');
+      if (el.title !== title) el.title = title;
+    }
+  }
+
+  function statusTime(s) {
+    switch (s.status) {
+      case 'working': return timeEl(s.since, 'dur', 'al');
+      case 'question':
+      case 'permission': return timeEl((s.question && s.question.ts) || s.since, 'dur', 'wacht');
+      case 'stale': return timeEl(s.lastTs, 'ago', 'stil sinds');
+      case 'done': return timeEl(s.since || s.lastTs, 'ago', 'klaar');
+      default: return timeEl(s.lastTs, 'ago');
+    }
+  }
+
+  // ---------------------------------------------------------------- cards
+
+  const ICON_OPEN = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 3h4v4M13 3 7.5 8.5M12 9.5V13H3V4h3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const ICON_COPY = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="8.5" height="8.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3 10.5V4a1.5 1.5 0 0 1 1.5-1.5H11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+
+  function openButton(s, primary) {
+    if (s.openUrl) {
+      return `<a class="btn ${primary ? 'primary' : ''}" href="${esc(s.openUrl)}" data-act="open" data-sid="${esc(s.id)}">${ICON_OPEN}Open in Claude</a>`;
+    }
+    if (s.resumeCmd) {
+      return `<button type="button" class="btn ${primary ? 'primary' : ''}" data-act="copy" data-text="${esc(s.resumeCmd)}" title="${esc(s.resumeCmd)}">${ICON_COPY}Kopieer resume-commando</button>`;
+    }
+    return '';
+  }
+
+  function optionsHtml(s, options) {
+    if (!options || !options.length) return '';
+    return `<div class="options">${options.map((o) =>
+      `<button type="button" class="option" data-act="answer" data-sid="${esc(s.id)}" data-text="${esc(o.label)}" title="Kopieer en open de sessie">${esc(o.label)}${o.desc ? `<small>${esc(o.desc)}</small>` : ''}</button>`
+    ).join('')}</div>`;
+  }
+
+  function questionCard(s) {
+    const q = s.question;
+    const key = 'q:' + s.id;
+    const isOpen = expanded.has(key);
+    const perm = q.kind === 'permission';
+    let body;
+    if (q.parts && q.parts.length) {
+      body = q.parts.map((p) => `
+        <div class="part">
+          ${p.header ? `<div class="ph">${esc(p.header)}</div>` : ''}
+          <div class="pq">${esc(p.question)}</div>
+          ${optionsHtml(s, p.options.map((o) => ({ label: o.label, desc: o.description })))}
+        </div>`).join('');
+    } else {
+      let context = q.context;
+      if (!context && q.kind === 'text' && s.last) {
+        const full = plain(s.last.text);
+        const qi = full.lastIndexOf(q.text.slice(0, 30));
+        context = (qi > 0 ? full.slice(0, qi) : full).trim();
+      }
+      body = `
+        <p class="ask">${esc(q.text)}</p>
+        ${q.detail ? `<div class="detail mono">${esc(shortPath(q.detail))}</div>` : ''}
+        ${context ? `<div class="context">${esc(plain(context))}</div>` : ''}
+        ${optionsHtml(s, (q.options || []).map((label) => ({ label })))}`;
+    }
+    const long = (q.context || (s.last && s.last.text) || '').length > 220;
+    return {
+      key,
+      html: `
+      <article class="card qcard ${perm ? 'permission' : ''} ${isOpen ? 'open' : ''}" data-key="${esc(key)}">
+        <div class="meta">
+          <span class="pill ${perm ? 'permission' : 'question'}"><span class="dot"></span>${esc(QUESTION_KIND[q.kind] || 'Vraag')}</span>
+          ${timeEl(q.ts || s.since, 'ago')}
+        </div>
+        ${body}
+        <div class="from"><strong>${esc(s.title)}</strong><span>${esc(s.project)} · ${esc(s.app)}</span></div>
+        <div class="actions">
+          ${openButton(s, true)}
+          <span class="spacer"></span>
+          ${long && !q.parts ? `<button type="button" class="btn link" data-act="toggle" data-key="${esc(key)}">${isOpen ? 'Minder' : 'Meer context'}</button>` : ''}
+        </div>
+      </article>`,
+    };
+  }
+
+  function flowCard(s) {
+    const key = 'f:' + s.id;
+    const isOpen = expanded.has(key);
+    const st = STATUS[s.status] || STATUS.idle;
+    const lines = [];
+
+    if (s.prompt && s.prompt.text) {
+      lines.push(`<div class="say you"><span class="who">Jij</span><span class="body">${esc(s.prompt.text)}</span></div>`);
+    } else if (s.autoPrompt) {
+      lines.push(`<div class="say you"><span class="who">Start</span><span class="body">${esc(s.autoPrompt.text)}</span></div>`);
+    }
+
+    if (s.status === 'working' || s.status === 'stale') {
+      if (s.activity) {
+        lines.push(`<div class="activity"><span class="tool">${esc(toolName(s.activity.tool))}</span><span class="what mono" title="${esc(s.activity.sum)}">${esc(shortPath(s.activity.sum))}</span></div>`);
+      }
+      if (s.subagents && s.subagents.length) {
+        lines.push(`<div class="subs">${s.subagents.length === 1 ? '1 subagent' : s.subagents.length + ' subagents'} aan het werk</div>`);
+      }
+    } else if (s.status === 'question' || s.status === 'permission') {
+      lines.push(`<div class="say claude"><span class="who">Vraag</span><span class="body">${esc(s.question ? s.question.text : '')}</span></div>`);
+    } else if (s.status === 'error' && s.error) {
+      lines.push(`<div class="say claude"><span class="who">Fout</span><span class="body">${esc(s.error.text)}</span></div>`);
+    } else if (s.recap || s.last) {
+      lines.push(`<div class="say claude"><span class="who">Claude</span><span class="body">${esc(plain(s.recap || s.last.text))}</span></div>`);
+    }
+
+    const long = ((s.prompt && s.prompt.text) || '').length > 160 || ((s.recap || (s.last && s.last.text) || '').length > 200);
+    return {
+      key,
+      html: `
+      <article class="card flow ${isOpen ? 'open' : ''}" data-key="${esc(key)}">
+        <div class="meta">
+          <span class="pill ${st.cls}"><span class="dot"></span>${esc(st.label)}</span>
+          <span class="chip-app">${esc(s.app)}</span>
+          ${statusTime(s)}
+        </div>
+        <h3 class="title">${esc(s.title)}</h3>
+        <div class="project" title="${esc(s.cwd || '')}">${esc(s.project)}${s.projectDetail && s.projectDetail !== s.project ? ` <span class="sep">·</span> ${esc(s.projectDetail)}` : ''}</div>
+        ${lines.join('')}
+        <div class="actions">
+          ${openButton(s, false)}
+          <span class="spacer"></span>
+          ${long ? `<button type="button" class="btn link" data-act="toggle" data-key="${esc(key)}">${isOpen ? 'Minder' : 'Meer'}</button>` : ''}
+        </div>
+      </article>`,
+    };
+  }
+
+  // ---------------------------------------------------------------- mini rows
+
+  const MINI_CLASS = {
+    question: 'question', permission: 'permission', working: 'working', stale: 'attention',
+    interrupted: 'attention', error: 'error', done: 'done', idle: 'done', ended: 'done',
+  };
+
+  function miniRow(s, withQuestion) {
+    const key = 'm:' + s.id;
+    const cls = MINI_CLASS[s.status] || 'done';
+    const st = STATUS[s.status] || STATUS.idle;
+    let sub = '';
+    if (withQuestion && s.question) {
+      const q = s.question;
+      sub = q.kind === 'permission' && q.tool
+        ? `${toolName(q.tool)}${q.detail ? ': ' + shortPath(q.detail) : ''}`
+        : q.text.split('\n')[0];
+    }
+    const when = (s.question && s.question.ts) || (s.status === 'working' ? s.since : s.lastTs);
+    const tip = [s.title, s.project, st.label, s.question && s.question.text].filter(Boolean).join(' · ');
+    const inner = `
+      <span class="mdot"></span>
+      <span class="mmain"><span class="mtitle">${esc(s.title)}</span>${sub ? `<span class="msub">${esc(sub)}</span>` : ''}</span>
+      ${timeEl(when, 'compact')}`;
+    const html = s.openUrl
+      ? `<a class="mrow ${cls}" data-key="${esc(key)}" href="${esc(s.openUrl)}" data-act="open" data-sid="${esc(s.id)}" title="${esc(tip)}">${inner}</a>`
+      : `<button type="button" class="mrow ${cls}" data-key="${esc(key)}" data-act="copy" data-text="${esc(s.resumeCmd || '')}" title="${esc(tip)} · klik om het resume-commando te kopiëren">${inner}</button>`;
+    return { key, html };
+  }
+
+  function renderMini(sessions, questions) {
+    const working = sessions.filter((s) => s.status === 'working').length;
+    const qIds = new Set(questions.map((s) => s.id));
+    const flows = sessions.filter((s) => !qIds.has(s.id));
+
+    renderList($('#mini-questions'), questions.map((s) => miniRow(s, true)));
+    renderList($('#mini-flows'), flows.map((s) => miniRow(s, false)));
+    setHidden($('#mini-q-none'), questions.length > 0);
+    setHidden($('#mini-f-none'), flows.length > 0);
+
+    const parts = [];
+    if (questions.length) parts.push(`<span class="hot">${questions.length} ${questions.length === 1 ? 'vraag' : 'vragen'}</span>`);
+    if (working) parts.push(`${working} bezig`);
+    setHTML($('#mini-sum'), parts.length ? parts.join(' · ') : 'Alles rustig');
+    for (const el of $$('[data-count="working"]')) setText(el, working);
+    $('.micro.q').classList.toggle('hot', questions.length > 0);
+    $('.micro.w').classList.toggle('hot', working > 0);
+  }
+
+  // Patch a live node into the shape of a fresh one, touching only what differs.
+  // Unchanged elements stay put, so animations, hover and selection survive.
+  function morph(live, fresh, depth = 0) {
+    // Below the card itself, an element whose class changed is a different
+    // thing (a dot is not a chip): swap it rather than repurpose it.
+    if (live.nodeType !== fresh.nodeType || live.nodeName !== fresh.nodeName ||
+        (depth > 0 && live.nodeType === 1 && live.getAttribute('class') !== fresh.getAttribute('class'))) {
+      live.replaceWith(fresh);
+      return fresh;
+    }
+    if (live.nodeType !== 1) {
+      if (live.nodeValue !== fresh.nodeValue) live.nodeValue = fresh.nodeValue;
+      return live;
+    }
+    for (const { name } of [...live.attributes]) {
+      if (!fresh.hasAttribute(name)) live.removeAttribute(name);
+    }
+    for (const { name, value } of [...fresh.attributes]) {
+      let v = value;
+      if (name === 'class' && live.classList.contains('flash')) v += ' flash';
+      if (live.getAttribute(name) !== v) live.setAttribute(name, v);
+    }
+    if (live.hasAttribute('data-ts')) return live; // updateTimes owns the text
+    const a = [...live.childNodes];
+    const b = [...fresh.childNodes];
+    b.forEach((node, i) => { if (i < a.length) morph(a[i], node, depth + 1); else live.appendChild(node); });
+    for (let i = b.length; i < a.length; i++) a[i].remove();
+    return live;
+  }
+
+  // Add, patch, reorder and remove cards so the list matches the new state.
+  function renderList(container, items) {
+    const existing = new Map($$(':scope > [data-key]', container).map((el) => [el.dataset.key, el]));
+    let prev = null;
+    for (const item of items) {
+      let el = existing.get(item.key);
+      const cacheKey = container.id + '|' + item.key;
+      if (!el || htmlCache.get(cacheKey) !== item.html) {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = item.html.trim();
+        const fresh = tmp.firstElementChild;
+        el = el ? morph(el, fresh) : fresh;
+        htmlCache.set(cacheKey, item.html);
+        updateTimes(el);
+      }
+      existing.delete(item.key);
+      const want = prev ? prev.nextElementSibling : container.firstElementChild;
+      if (want !== el) container.insertBefore(el, want);
+      prev = el;
+    }
+    for (const [key, el] of existing) {
+      el.remove();
+      htmlCache.delete(container.id + '|' + key);
+    }
+  }
+
+  // ---------------------------------------------------------------- render
+
+  function render() {
+    if (!state) return;
+    const sessions = state.sessions || [];
+
+    const questions = sessions
+      .filter((s) => s.question && (s.status === 'question' || s.status === 'permission'))
+      .sort((a, b) => ((a.status === 'permission' ? 0 : 1) - (b.status === 'permission' ? 0 : 1)) || ((b.question.ts || 0) - (a.question.ts || 0)));
+
+    renderList($('#question-list'), questions.map(questionCard));
+    setHidden($('#question-empty'), questions.length > 0);
+
+    const groupsRoot = $('#flow-groups');
+    for (const g of GROUPS) {
+      let sec = $(`[data-group="${g.key}"]`, groupsRoot);
+      if (!sec) {
+        sec = document.createElement('div');
+        sec.className = 'group';
+        sec.dataset.group = g.key;
+        sec.innerHTML = `<h3 class="group-title">${esc(g.title)} <span class="count"></span></h3><div class="grid" id="grid-${g.key}"></div>`;
+        groupsRoot.appendChild(sec);
+      }
+      const items = sessions.filter(g.match);
+      setHidden(sec, items.length === 0);
+      setText($('.count', sec), items.length);
+      renderList($('.grid', sec), items.map(flowCard));
+    }
+    setHidden($('#flow-empty'), sessions.length > 0);
+
+    const working = sessions.filter((s) => s.status === 'working').length;
+    setText($('#flows-sub'), `${sessions.length} in de laatste ${windowLabel(state.windowMin)}${working ? ` · ${working} bezig` : ''}`);
+    for (const el of $$('[data-count="questions"]')) {
+      setText(el, questions.length);
+      el.classList.toggle('hot', questions.length > 0);
+    }
+    for (const el of $$('[data-count="flows"]')) setText(el, sessions.length);
+    { const t = questions.length ? `(${questions.length}) AI Flows` : 'AI Flows'; if (document.title !== t) document.title = t; }
+    renderMini(sessions, questions);
+    syncBell();
+
+    const notice = $('#notice');
+    if (!state.hooksSeen) {
+      setHidden(notice, false);
+      if (!notice.innerHTML) notice.innerHTML = 'De live-triggers (hooks) hebben nog niets gemeld. Tot de eerste melding schat het dashboard de status uit de transcripts. Installeer ze met <code>node install-hooks.js</code> in de map <code>ai-flows</code>.';
+    } else {
+      setHidden(notice, true);
+    }
+    setLive(connected);
+    announce(questions);
+  }
+
+  function windowLabel(min) {
+    if (min < 60) return `${min} min`;
+    if (min === 60) return 'uur';
+    return `${Math.round(min / 60)} uur`;
+  }
+
+  function announce(questions) {
+    const keys = new Map(questions.map((s) => [s.id + ':' + (s.question.ts || ''), s]));
+    if (knownQuestions) {
+      for (const [k, s] of keys) {
+        if (knownQuestions.has(k)) continue;
+        const card = $(`#question-list [data-key="q:${CSS.escape(s.id)}"]`);
+        if (card) { card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash'); }
+      }
+    }
+    knownQuestions = new Set(keys.keys());
+  }
+
+  function setLive(ok) {
+    const live = $('#live');
+    live.classList.toggle('ok', ok);
+    live.classList.toggle('bad', !ok);
+    const ml = $('#mini-live');
+    ml.classList.toggle('ok', ok);
+    ml.classList.toggle('bad', !ok);
+    setTitle(ml, ok ? 'Live verbonden' : 'Geen verbinding met de server');
+    setText($('#live-text'), !ok
+      ? 'Geen verbinding met de server'
+      : state && state.hooksSeen ? 'Live via hooks' : 'Live · schatting uit transcripts');
+  }
+
+  // ---------------------------------------------------------------- actions
+
+  let toastTimer = null;
+  function toast(text) {
+    const t = $('#toast');
+    t.textContent = text;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
+  }
+
+  async function copy(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    }
+  }
+
+  function openUrl(url) {
+    const a = document.createElement('a');
+    a.href = url;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  function find(sid) {
+    return state && state.sessions.find((s) => s.id === sid);
+  }
+
+  // The server opens the session with macOS `open`, so the browser never asks
+  // "Open Claude?". Only when the server cannot, fall back to the link itself.
+  async function openSession(s) {
+    if (!s || !s.openUrl) return;
+    try {
+      const r = await fetch('/api/open?id=' + encodeURIComponent(s.id), { method: 'POST', headers: { 'X-AI-Flows': '1' } });
+      if (r.ok && (await r.json()).ok) return;
+    } catch {}
+    openUrl(s.openUrl);
+  }
+
+  document.addEventListener('click', async (e) => {
+    const el = e.target.closest('[data-act]');
+    if (!el) return;
+    const act = el.dataset.act;
+    if (act === 'open') {
+      e.preventDefault();
+      openSession(find(el.dataset.sid));
+    } else if (act === 'answer') {
+      const s = find(el.dataset.sid);
+      const text = el.dataset.text;
+      await copy(text);
+      if (s && s.openUrl) {
+        toast(`“${text}” staat op je klembord. Plak het in de sessie met ⌘V.`);
+        openSession(s);
+      } else {
+        toast(`“${text}” staat op je klembord.`);
+      }
+    } else if (act === 'copy') {
+      await copy(el.dataset.text);
+      toast('Gekopieerd. Plak het in je terminal.');
+    } else if (act === 'toggle') {
+      const key = el.dataset.key;
+      if (expanded.has(key)) expanded.delete(key); else expanded.add(key);
+      render();
+    }
+  });
+
+  // window selector
+  function syncWindowButtons() {
+    for (const b of $$('#window button')) b.setAttribute('aria-checked', String(Number(b.dataset.min) === windowMin));
+  }
+  $('#window').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-min]');
+    if (!b) return;
+    windowMin = Number(b.dataset.min);
+    store.set('window', windowMin);
+    syncWindowButtons();
+    connect();
+  });
+
+  // tabs (narrow screens)
+  function syncTabs() {
+    document.body.dataset.tab = tab;
+    for (const b of $$('.tabs button')) b.classList.toggle('active', b.dataset.tab === tab);
+  }
+  $('.tabs').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-tab]');
+    if (!b) return;
+    tab = b.dataset.tab;
+    store.set('tab', tab);
+    syncTabs();
+  });
+
+  // macOS notifications: the server sends them (also with no dashboard open);
+  // this button only switches them on or off.
+  function syncBell() {
+    const bell = $('#bell');
+    const available = !state || state.notifier !== false;
+    const on = !!(state && state.notify && available);
+    bell.setAttribute('aria-pressed', String(on));
+    bell.disabled = !available;
+    setTitle(bell, available
+      ? (on ? 'Mac-meldingen bij een nieuwe vraag staan aan' : 'Zet Mac-meldingen bij een nieuwe vraag aan')
+      : 'Bouw eerst het meldingsappje: notifier/build.sh');
+    setText($('#bell-text'), on ? 'Meldingen aan' : 'Meldingen uit');
+  }
+  $('#bell').addEventListener('click', async () => {
+    if (!state) return;
+    const notify = !state.notify;
+    try {
+      const r = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'X-AI-Flows': '1', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notify }),
+      });
+      const d = await r.json();
+      state.notify = d.notify;
+      syncBell();
+      toast(d.notify ? 'Mac-meldingen staan aan. Je krijgt er nu een als test.' : 'Mac-meldingen staan uit.');
+    } catch {
+      toast('Kon de instelling niet opslaan: is de server bereikbaar?');
+    }
+  });
+
+  // mini mode: ?mini, or automatically in a window narrower than 360 px
+  const params = new URLSearchParams(location.search);
+  const narrowQuery = matchMedia('(max-width: 359px)');
+  function applyMode() {
+    const mini = params.has('mini') || (!params.has('full') && narrowQuery.matches);
+    document.body.classList.toggle('is-mini', mini);
+  }
+  narrowQuery.addEventListener('change', applyMode);
+
+  function openFull() {
+    // From the pop-up window, show the full dashboard in a normal tab.
+    if (window.opener && !window.opener.closed) { window.opener.focus(); return; }
+    if (params.has('mini') && window.name === 'ai-flows-mini') { window.open('/', 'ai-flows-full'); return; }
+    location.href = narrowQuery.matches ? '/?full' : '/';
+  }
+  $('#mini-expand').addEventListener('click', openFull);
+  $('.mini-micro').addEventListener('click', openFull);
+
+  $('#open-mini').addEventListener('click', () => {
+    const w = window.open('/?mini', 'ai-flows-mini', 'popup=yes,width=320,height=460');
+    if (!w) toast('Je browser blokkeerde het venster. Open anders localhost:4777/?mini.');
+  });
+
+  // ---------------------------------------------------------------- data
+
+  function connect() {
+    if (es) es.close();
+    // ?snapshot loads the state once (for headless screenshots).
+    if (new URLSearchParams(location.search).has('snapshot')) {
+      fetch('/api/state?window=' + windowMin).then((r) => r.json()).then((d) => { connected = true; state = d; render(); });
+      return;
+    }
+    es = new EventSource('/api/stream?window=' + windowMin);
+    es.onmessage = (e) => {
+      connected = true;
+      try { state = JSON.parse(e.data); } catch { return; }
+      // New page code on the server: pick it up without a manual reload.
+      if (bootBuild == null) bootBuild = state.build;
+      else if (state.build && state.build !== bootBuild) { location.reload(); return; }
+      render();
+    };
+    es.onopen = () => { connected = true; setLive(true); };
+    es.onerror = () => { connected = false; setLive(false); };
+  }
+
+  applyMode();
+  syncWindowButtons();
+  syncTabs();
+  syncBell();
+  connect();
+  setInterval(() => updateTimes(), 15000);
+})();
