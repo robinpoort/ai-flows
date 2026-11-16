@@ -97,7 +97,7 @@ path.
 | Where | What |
 |---|---|
 | `~/.claude/settings.json` | Writes: one hook entry per event, marked `# ai-flows` (removed by `uninstall.sh`) |
-| `~/.claude/ai-flows/` | Writes: `app/` (server, page, helper), `hook.sh`, daily event logs (7 days kept), `settings.json`, `token`, one-time `claim` codes, `notify/` payloads |
+| `~/.claude/ai-flows/` | Writes: `app/` (server, page, helper), `hook.sh`, daily event logs (7 days kept), `settings.json`, `token`, `marks.json`, one-time `claim` codes, `notify/` payloads |
 | `~/.claude/projects/*/*.jsonl` | Reads: the tail of recent transcripts |
 | `~/Library/Application Support/Claude/claude-code-sessions/` | Reads: the desktop app's session titles and ids |
 | `~/Library/LaunchAgents/local.ai-flows.plist` | Writes: the LaunchAgent |
@@ -137,7 +137,7 @@ checkout.
 - The server listens on 127.0.0.1 only and answers only requests whose Host is
   `localhost`, `127.0.0.1` or `[::1]` (no DNS rebinding). It sends no CORS
   headers, so other sites cannot read its responses.
-- Actions (`/api/open`, `/api/settings`) also need a POST with an `X-AI-Flows`
+- Actions (`/api/open`, `/api/settings`, `/api/mark`, `/api/claim`) also need a POST with an `X-AI-Flows`
   header, which a cross-site page can only send after a preflight that this
   server refuses.
 - Every response carries a Content Security Policy (own files only,
@@ -158,8 +158,9 @@ is treated as hostile:
   owner-only file it deletes after reading, not as arguments (which other
   accounts could read). On a click it opens only `claude://code/…` and
   `http://127.0.0.1` links.
-- `/api/open` opens only `claude://code/continue?session=local_…` for a session
-  it finds in the desktop app's files, through `execFile` (no shell).
+- Sessions only open as `claude://code/continue?session=local_…`, built by the
+  server from the desktop app's session files (`/api/open` runs it through
+  `execFile`, no shell).
 - Transcripts are only read from `~/.claude/projects`, and only regular files.
 
 **The hook** runs with `PATH=/usr/bin:/bin`, absolute program paths, a jq
@@ -211,9 +212,23 @@ choice (`AskUserQuestion`) or a plan to approve (`ExitPlanMode`), ends its turn
 with a question in the desktop app's next-step box, or ends its last message
 with a question. The question disappears as soon as you answer.
 
-**Opening sessions.** "Open in Claude", a mini row or an answer button asks the
-server to run `open claude://code/continue?session=local_…`, so the browser
-never shows its "Open Claude?" prompt.
+**Opening sessions.** "Open in Claude", a mini row or an answer button opens
+`claude://code/continue?session=local_…`. How is a setting (**Instellingen**
+in the header):
+- **Zonder vraag** (default): the server opens the link. Nothing asks you, and
+  Claude jumps to the session, but it stays behind your current window: since
+  macOS 14 a background program may not bring another app forward.
+- **Via je browser**: your browser or app opens the link, which brings Claude
+  forward with the keyboard focus. Chrome asks once (tick "Always allow");
+  apps that cannot remember the choice ask every time.
+
+A click on a notification always brings Claude forward without asking: the
+helper hands over the focus (`yieldActivation`).
+
+**Read and unread.** A finished answer you have not opened in Claude yet gets
+a blue dot. Right-click a flow (card, question or mini row) to mark it unread
+(it stays blue until you open it in Claude) or read (also for one that stays
+blue when it should not). Marks are kept in `~/.claude/ai-flows/marks.json`.
 
 **Notifications.** The server checks every 2 seconds. A question must stay open
 for 4 seconds before it is announced (no pop-up while you are already
@@ -252,7 +267,7 @@ which removed the scrollbar again, and the layout flickered.
 | `hook.sh` | Hook command: stdin event → compact JSON line in the daily log |
 | `install-hooks.js` | Adds (`--remove`: removes) the hook entries in `~/.claude/settings.json` |
 | `install-service.js` | Installs (`--remove`: removes) the LaunchAgent |
-| `server.js` | Reads the log, desktop sessions and transcripts; serves the UI, `/api/state`, `/api/stream` (SSE), `/api/open` and `/api/settings` |
+| `server.js` | Reads the log, desktop sessions and transcripts; serves the UI, `/api/state`, `/api/stream` (SSE), `/api/open`, `/api/settings`, `/api/mark` and `/api/claim` |
 | `public/` | Dashboard UI |
 | `notifier/` | Swift source, icon SVGs and `build.sh` for `AI Flows.app` |
 

@@ -555,6 +555,28 @@ function checkFront() {
 // session; this adds "it finished while you were looking at it".
 const seenAt = new Map(); // sid -> ms
 
+// Your own marks from the dashboard's right-click menu: { sid: { unread, read } }
+// (times in ms). "Unread" lasts until you open the session in Claude or mark it
+// read; "read" hides an unseen answer that finished before it. Kept in an
+// owner-only file so they survive a restart.
+const MARKS_FILE = path.join(EVENTS_DIR, 'marks.json');
+let marks = new Map();
+try {
+  const raw = JSON.parse(fs.readFileSync(MARKS_FILE, 'utf8'));
+  if (raw && typeof raw === 'object') marks = new Map(Object.entries(raw));
+} catch {}
+
+function saveMarks() {
+  const now = Date.now();
+  for (const [sid, m] of marks) {
+    if (now - Math.max(m.unread || 0, m.read || 0) > KEEP_MS) marks.delete(sid);
+  }
+  fs.mkdirSync(EVENTS_DIR, { recursive: true, mode: 0o700 });
+  const tmp = `${MARKS_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(marks)) + '\n', { mode: 0o600 });
+  fs.renameSync(tmp, MARKS_FILE);
+}
+
 // ---------------------------------------------------------------- state
 
 const STATUS_RANK = { permission: 0, question: 1, working: 2, error: 3, interrupted: 4, stale: 5, done: 6, idle: 7, ended: 8 };
@@ -632,11 +654,11 @@ function buildSession(sid) {
   // A finished answer you have not looked at yet (desktop sessions only: the
   // app is what knows when you focused one).
   let unread = false;
-  if (desk) {
-    if (claudeInFront && desk.localId === focusedLocalId) seenAt.set(sid, Date.now());
-    const seen = Math.max(desk.lastFocusedAt || 0, seenAt.get(sid) || 0);
-    unread = (st.status === 'done' || st.status === 'error') && (since || 0) > seen;
-  }
+  const mark = marks.get(sid) || {};
+  if (desk && claudeInFront && desk.localId === focusedLocalId) seenAt.set(sid, Date.now());
+  const opened = desk ? Math.max(desk.lastFocusedAt || 0, seenAt.get(sid) || 0) : 0;
+  if (desk) unread = (st.status === 'done' || st.status === 'error') && (since || 0) > Math.max(opened, mark.read || 0);
+  if (mark.unread && mark.unread > Math.max(opened, mark.read || 0)) unread = true;
 
   if (busySubs.length && ['done', 'idle', 'interrupted', 'stale'].includes(status)) {
     status = 'working';
@@ -644,7 +666,8 @@ function buildSession(sid) {
     since = Math.min(...busySubs.map((a) => a.ts || Date.now()));
     activity = busySubs.map((a) => a.activity).filter(Boolean).sort((a, b) => b.ts - a.ts)[0] || null;
   }
-  if (status !== 'done' && status !== 'error') unread = false;
+  // Busy or waiting for you has its own colour; "unread" is for the rest.
+  if (status === 'working' || status === 'permission' || status === 'question') unread = false;
   if (status === 'idle' && !st.prompt && !st.last && source === 'transcript') status = 'done';
 
   const cwd = (ev && ev.cwd) || (fromTr && fromTr.cwd) || (desk && desk.cwd) || null;
@@ -669,6 +692,15 @@ function buildSession(sid) {
       text: p.tool ? `Mag Claude ${p.tool} gebruiken?` : (p.sum || 'Claude vraagt toestemming'),
       tool: p.tool || null, detail: p.tool ? p.sum : null, options: [], context: null, ts: p.ts || st.since,
     };
+  }
+
+  // "Mark as read" on a question you do not need to answer (often a turn that
+  // just ends on a question sentence): it goes grey, leaves the questions list
+  // and its notification is withdrawn. A newer question shows up again.
+  if (question && mark.read && mark.read >= (question.ts || since || 0)) {
+    question = null;
+    status = 'done';
+    unread = false;
   }
 
   const recap = st.wrap && st.wrap.recap ? st.wrap.recap : (desk && desk.summary && desk.summary.status_detail) || null;
@@ -745,6 +777,7 @@ function computeState(windowMin) {
     windowMin: windowMs / MINUTE,
     hooksSeen: eventSessions.size > 0,
     notify: settings.notify,
+    openVia: settings.openVia,
     notifier: notifierAvailable(),
     sessions,
   };
@@ -840,8 +873,22 @@ const NOTIFY_GRACE_MS = 4000;
 const DASHBOARD_URL = `http://127.0.0.1:${PORT}/`;
 const NOTIFY_DIR = path.join(EVENTS_DIR, 'notify');
 
+// openVia: how "Open in Claude" works from the dashboard.
+//   'server'  — the server opens the session: no question asked, but macOS
+//               (14+) does not let a background program bring Claude forward.
+//   'browser' — your browser or app opens the link: Claude comes forward with
+//               the keyboard focus; the browser may ask for permission.
+const OPEN_VIA = ['server', 'browser'];
+const DEFAULT_SETTINGS = { notify: true, openVia: 'server' };
+
 function loadSettings() {
-  try { return { notify: true, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) }; } catch { return { notify: true }; }
+  try {
+    const s = { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
+    if (!OPEN_VIA.includes(s.openVia)) s.openVia = DEFAULT_SETTINGS.openVia;
+    return s;
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
 }
 let settings = loadSettings();
 restrict(SETTINGS_FILE, 0o600);
@@ -957,6 +1004,10 @@ async function handleSettings(req, res) {
   if (req.method === 'POST') {
     if (!isAction(req)) { res.writeHead(403); return res.end(); }
     const body = await readJson(req);
+    if (body && OPEN_VIA.includes(body.openVia)) {
+      settings.openVia = body.openVia;
+      saveSettings();
+    }
     if (body && typeof body.notify === 'boolean') {
       settings.notify = body.notify;
       saveSettings();
@@ -966,7 +1017,7 @@ async function handleSettings(req, res) {
       }
     }
   }
-  sendJson(res, { notify: settings.notify, notifier: notifierAvailable() });
+  sendJson(res, { notify: settings.notify, openVia: settings.openVia, notifier: notifierAvailable() });
 }
 
 // One-time code: open.sh writes "<code> <unix time>" to an owner-only file and
@@ -995,8 +1046,21 @@ async function handleClaim(req, res) {
   sendJson(res, { token: TOKEN.toString() });
 }
 
-// Open a session in the Claude app from here, so the browser never has to ask
-// whether it may launch the app.
+// Mark a session read or unread from the right-click menu.
+async function handleMark(req, res) {
+  if (!isAction(req)) { res.writeHead(403); return res.end(); }
+  const body = await readJson(req);
+  const sid = body && typeof body.id === 'string' ? body.id : '';
+  if (!/^[A-Za-z0-9_-]{1,100}$/.test(sid) || typeof body.unread !== 'boolean') return sendJson(res, { error: 'Ongeldig' }, 400);
+  const m = { ...(marks.get(sid) || {}) };
+  if (body.unread) m.unread = Date.now(); else { m.read = Date.now(); delete m.unread; }
+  marks.set(sid, m);
+  saveMarks();
+  sendJson(res, { ok: true, unread: body.unread });
+}
+
+// "Open in Claude" when openVia is 'server': no browser question, but Claude
+// stays behind your current window (see OPEN_VIA).
 function openSession(req, res, sid) {
   if (!isAction(req)) { res.writeHead(403); return res.end(); }
   scanDesktop();
@@ -1042,6 +1106,12 @@ function handle(req, res) {
     const windowMin = windowOf(Number(url.searchParams.get('window')) || 120);
     if (url.pathname === '/api/state') return sendJson(res, computeState(windowMin));
     if (url.pathname === '/api/open') return openSession(req, res, url.searchParams.get('id'));
+    if (url.pathname === '/api/mark') {
+      return handleMark(req, res).catch((err) => {
+        logOnce('mark', err);
+        if (!res.headersSent) sendJson(res, { error: 'Fout' }, 500);
+      });
+    }
     if (url.pathname === '/api/settings') {
       return handleSettings(req, res).catch((err) => {
         logOnce('settings', err);

@@ -586,10 +586,14 @@
     return state && state.sessions.find((s) => s.id === sid);
   }
 
-  // The server opens the session with macOS `open`, so the browser never asks
-  // "Open Claude?". Only when the server cannot, fall back to the link itself.
+  // How a session opens follows the setting (see OPEN_VIA in server.js):
+  // 'server' (default) asks nothing but leaves Claude behind your window;
+  // 'browser' lets your browser or app open the link, which brings Claude
+  // forward with the focus (since macOS 14 only the app you click in may do
+  // that) but may ask for permission. If the server cannot, the link is used.
   async function openSession(s) {
     if (!s || !s.openUrl) return;
+    if (state && state.openVia === 'browser') { openUrl(s.openUrl); return; }
     try {
       const r = await fetch('/api/open?id=' + encodeURIComponent(s.id), { method: 'POST', headers: apiHeaders({ 'X-AI-Flows': '1' }) });
       if (r.status === 401) { showLocked(); return; }
@@ -597,6 +601,136 @@
     } catch {}
     openUrl(s.openUrl);
   }
+
+  // ---------------------------------------------------------------- settings panel
+
+  const settingsButton = $('#settings-button');
+  const settingsPanel = $('#settings-panel');
+
+  function syncSettings() {
+    const via = (state && state.openVia) || 'server';
+    for (const r of settingsPanel.querySelectorAll('input[name="open-via"]')) r.checked = r.value === via;
+  }
+
+  function toggleSettings(open) {
+    settingsPanel.hidden = !open;
+    settingsButton.setAttribute('aria-expanded', String(open));
+    if (!open) return;
+    syncSettings();
+    const r = settingsButton.getBoundingClientRect();
+    settingsPanel.style.top = `${r.bottom + 8}px`;
+    settingsPanel.style.right = `${Math.max(16, innerWidth - r.right)}px`;
+    const checked = settingsPanel.querySelector('input:checked') || settingsPanel.querySelector('input');
+    if (checked) checked.focus();
+  }
+
+  settingsButton.addEventListener('click', () => toggleSettings(settingsPanel.hidden));
+  document.addEventListener('pointerdown', (e) => {
+    if (!settingsPanel.hidden && !e.target.closest('#settings-panel, #settings-button')) toggleSettings(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !settingsPanel.hidden) { toggleSettings(false); settingsButton.focus(); }
+  });
+  window.addEventListener('resize', () => { if (!settingsPanel.hidden) toggleSettings(true); });
+
+  settingsPanel.addEventListener('change', async (e) => {
+    if (e.target.name !== 'open-via') return;
+    const openVia = e.target.value;
+    try {
+      const r = await fetch('/api/settings', {
+        method: 'POST',
+        headers: apiHeaders({ 'X-AI-Flows': '1', 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ openVia }),
+      });
+      if (r.status === 401) { showLocked(); return; }
+      const d = await r.json();
+      if (state) state.openVia = d.openVia;
+      syncSettings();
+      toast(d.openVia === 'browser' ? 'Sessies openen voortaan via je browser.' : 'Sessies openen voortaan zonder vraag.');
+    } catch {
+      syncSettings();
+      toast('Kon de instelling niet opslaan: is de server bereikbaar?');
+    }
+  });
+
+  // ---------------------------------------------------------------- right-click menu
+
+  // Right-click a flow (card, question or mini row) to mark it read or unread,
+  // or to open it. "Unread" lasts until you open the session in Claude.
+  const ctx = document.getElementById('ctx');
+  let ctxSid = null;
+
+  function closeCtx() {
+    if (ctx.hidden) return;
+    ctx.hidden = true;
+    ctxSid = null;
+  }
+
+  function openCtx(x, y, s) {
+    ctxSid = s.id;
+    ctx.querySelector('[data-ctx="open"]').hidden = !s.openUrl;
+    setText(ctx.querySelector('[data-ctx="mark"]'), needsReading(s) ? 'Markeer als gelezen' : 'Markeer als ongelezen');
+    ctx.hidden = false;
+    const r = ctx.getBoundingClientRect();
+    ctx.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 4))}px`;
+    ctx.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - 4))}px`;
+    ctx.querySelector('button:not([hidden])').focus();
+  }
+
+  // Blue means "look at me": an unseen answer, or a question. Both can be
+  // marked read, which turns them grey.
+  const needsReading = (s) => s.unread || s.status === 'question' || s.status === 'permission';
+
+  async function markSession(s, unread) {
+    try {
+      const r = await fetch('/api/mark', {
+        method: 'POST',
+        headers: apiHeaders({ 'X-AI-Flows': '1', 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ id: s.id, unread }),
+      });
+      if (r.status === 401) { showLocked(); return; }
+      if (!r.ok) throw new Error(String(r.status));
+      // Show it straight away; the next update from the server confirms it.
+      if (!unread && (s.status === 'question' || s.status === 'permission')) { s.status = 'done'; s.question = null; }
+      s.unread = unread && !['working', 'permission', 'question'].includes(s.status);
+      render();
+      toast(unread ? 'Gemarkeerd als ongelezen.' : 'Gemarkeerd als gelezen.');
+    } catch {
+      toast('Kon de markering niet opslaan.');
+    }
+  }
+
+  document.addEventListener('contextmenu', (e) => {
+    const el = e.target.closest('[data-key]');
+    const s = el && /^[fmq]:/.test(el.dataset.key) ? find(el.dataset.key.slice(2)) : null;
+    if (!s) { closeCtx(); return; }
+    e.preventDefault();
+    openCtx(e.clientX, e.clientY, s);
+  });
+
+  ctx.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-ctx]');
+    if (!b) return;
+    const s = find(ctxSid);
+    closeCtx();
+    if (!s) return;
+    if (b.dataset.ctx === 'open') openSession(s);
+    else markSession(s, !needsReading(s));
+  });
+
+  ctx.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const items = $$('button:not([hidden])', ctx);
+    const i = items.indexOf(document.activeElement);
+    items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
+  });
+
+  document.addEventListener('pointerdown', (e) => { if (!e.target.closest('#ctx')) closeCtx(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCtx(); });
+  document.addEventListener('scroll', closeCtx, true);
+  window.addEventListener('resize', closeCtx);
+  window.addEventListener('blur', closeCtx);
 
   document.addEventListener('click', async (e) => {
     const el = e.target.closest('[data-act]');

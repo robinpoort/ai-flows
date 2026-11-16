@@ -22,10 +22,10 @@
 
     <div class="controls">
       <div class="segmented" role="radiogroup" aria-label="Hoe ver terug" id="window">
-        <button type="button" role="radio" data-min="30">30 min</button>
-        <button type="button" role="radio" data-min="120">2 uur</button>
-        <button type="button" role="radio" data-min="480">8 uur</button>
-        <button type="button" role="radio" data-min="1440">24 uur</button>
+        <button type="button" role="radio" data-min="30" aria-label="30 minuten"><span class="long">30 min</span><span class="short" aria-hidden="true">30m</span></button>
+        <button type="button" role="radio" data-min="120" aria-label="2 uur"><span class="long">2 uur</span><span class="short" aria-hidden="true">2u</span></button>
+        <button type="button" role="radio" data-min="480" aria-label="8 uur"><span class="long">8 uur</span><span class="short" aria-hidden="true">8u</span></button>
+        <button type="button" role="radio" data-min="1440" aria-label="24 uur"><span class="long">24 uur</span><span class="short" aria-hidden="true">24u</span></button>
       </div>
       <button type="button" class="bell" id="open-mini" title="Open een klein los venster met alleen de kern">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="11.5" y="11.5" width="6" height="5" rx="1.2" fill="currentColor"/></svg>
@@ -35,8 +35,25 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15L6 16Z M10 20a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
         <span id="bell-text">Meldingen uit</span>
       </button>
+      <button type="button" class="bell" id="settings-button" aria-haspopup="dialog" aria-expanded="false" aria-controls="settings-panel" title="Instellingen">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+        <span>Instellingen</span>
+      </button>
     </div>
   </header>
+
+  <section class="settings-panel" id="settings-panel" role="dialog" aria-labelledby="settings-title" hidden>
+    <h3 id="settings-title">Sessies openen</h3>
+    <label class="choice">
+      <input type="radio" name="open-via" value="server">
+      <span><strong>Zonder vraag</strong><small>Claude springt meteen naar de sessie, maar blijft achter je huidige venster.</small></span>
+    </label>
+    <label class="choice">
+      <input type="radio" name="open-via" value="browser">
+      <span><strong>Via je browser</strong><small>Claude komt naar voren, met de focus erop. Je browser of app vraagt misschien om toestemming; in Chrome kun je kiezen voor “Altijd toestaan”.</small></span>
+    </label>
+    <p class="settings-note">Een klik op een melding opent Claude altijd vooraan, zonder vraag.</p>
+  </section>
 
   <nav class="tabs" aria-label="Weergave">
     <button type="button" data-tab="questions" class="active">Vragen <span class="count" data-count="questions">0</span></button>
@@ -113,6 +130,11 @@
       <p class="locked-note">Dat hoeft maar één keer per browser: daarna onthoudt deze pagina de sleutel.</p>
     </div>
   </section>
+
+  <div class="ctx" id="ctx" role="menu" aria-label="Flow" hidden>
+    <button type="button" role="menuitem" data-ctx="open">Open in Claude</button>
+    <button type="button" role="menuitem" data-ctx="mark">Markeer als ongelezen</button>
+  </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 

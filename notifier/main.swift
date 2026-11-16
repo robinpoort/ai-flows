@@ -104,13 +104,30 @@ final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 didReceive response: UNNotificationResponse,
                                 withCompletionHandler done: @escaping () -> Void) {
-        if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
-           let link = response.notification.request.content.userInfo["url"] as? String,
-           let url = URL(string: link), isAllowed(url) {
-            NSWorkspace.shared.open(url)
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+              let link = response.notification.request.content.userInfo["url"] as? String,
+              let url = URL(string: link), isAllowed(url) else {
+            done()
+            quit(after: 0.5)
+            return
         }
-        done()
-        quit(after: 0.5)
+        // Since macOS 14 an app only comes to the front when the active app
+        // hands over. The click made us the active app, so hand over to the
+        // app that opens the link (Claude, or the browser for the dashboard)
+        // and ask for it to be activated, so your keyboard lands there.
+        let target = NSWorkspace.shared.urlForApplication(toOpen: url)
+        if #available(macOS 14.0, *), let target, let id = Bundle(url: target)?.bundleIdentifier {
+            NSApp.yieldActivation(toApplicationWithBundleIdentifier: id)
+        }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.open(url, configuration: config) { app, _ in
+            DispatchQueue.main.async {
+                if #available(macOS 14.0, *) { app?.activate() } else { app?.activate(options: []) }
+                done()
+                self.quit(after: 0.5)
+            }
+        }
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,
