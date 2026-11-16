@@ -629,6 +629,15 @@ const CODEX_QUERIES = [
     from threads where updated_at * 1000 > ${since} and source not like '{%' order by updated_at desc limit 100`,
 ];
 
+// The database uses a write-ahead log. While Codex runs, a read-only reader
+// shares its lock file (-shm); once Codex has quit that file is gone and a
+// read-only open fails ("unable to open database file"). Without a -wal file
+// nothing is being written, so the file can be read as immutable: no lock file.
+function codexTarget(db) {
+  if (fs.existsSync(db + '-wal')) return db;
+  return 'file:' + db.split('/').map(encodeURIComponent).join('/') + '?immutable=1';
+}
+
 function scanCodex() {
   const now = Date.now();
   if (codexBusy || now - codexScanAt < 4000) return;
@@ -645,7 +654,7 @@ function scanCodex() {
   };
   const attempt = (i) => {
     if (i >= CODEX_QUERIES.length) return finish(null);
-    execFile('/usr/bin/sqlite3', ['-readonly', '-json', db, CODEX_QUERIES[i](since)],
+    execFile('/usr/bin/sqlite3', ['-readonly', '-json', codexTarget(db), CODEX_QUERIES[i](since)],
       { timeout: 4000, maxBuffer: 4 * 1024 * 1024 }, (err, out) => {
         if (err) { if (i === CODEX_QUERIES.length - 1) logOnce('codex database', err); return attempt(i + 1); }
         try { finish(out.trim() ? JSON.parse(out) : []); } catch (e) { logOnce('codex database', e); attempt(i + 1); }
@@ -968,6 +977,193 @@ function saveMarks() {
   fs.renameSync(tmp, MARKS_FILE);
 }
 
+// ---------------------------------------------------------------- usage limits
+
+// The 5-hour and weekly limits of your Claude and Codex subscriptions, for the
+// bars at the bottom of the page. Per tool while its "limits" setting is on
+// (the default), and only fetched while a dashboard is open.
+//
+// Claude: the endpoint behind Claude Code's /usage, with the login Claude Code
+// keeps in the macOS keychain. It is undocumented, so it may change or stop
+// working. The token is read fresh each time, sent only to api.anthropic.com,
+// and never stored or logged. It is never refreshed here either: that would
+// replace the login Claude Code holds. Once it expires we wait until Claude
+// Code renews it.
+//
+// Codex: every Codex turn writes its limits into the thread's rollout
+// (token_count events), so the newest rollout has the latest numbers.
+
+const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
+const CLAUDE_KEYCHAIN = 'Claude Code-credentials';
+const CLAUDE_USAGE_EVERY = 3 * MINUTE;
+const CODEX_LIMITS_EVERY = 10 * 1000;
+// For tests only: a JSON file with an endpoint response, read in place of the
+// keychain and the network.
+const CLAUDE_USAGE_FILE = process.env.AI_FLOWS_CLAUDE_USAGE || null;
+
+const limitsCache = {
+  claude: { windows: null, at: 0, error: null, next: 0, busy: false },
+  codex: { windows: null, at: 0, next: 0, file: null, size: -1 },
+};
+
+function limitWindow(key, pct, resetsAt) {
+  const p = Number(pct);
+  if (!Number.isFinite(p)) return null;
+  const r = typeof resetsAt === 'number' ? resetsAt : Date.parse(resetsAt);
+  return { key, pct: Math.max(0, Math.min(100, p)), resetsAt: Number.isFinite(r) ? r : null };
+}
+
+function claudeWindows(body) {
+  if (!body || typeof body !== 'object') return null;
+  const list = Array.isArray(body.limits) ? body.limits : [];
+  const listed = (kind) => { const l = list.find((x) => x && x.kind === kind); return l ? [l.percent, l.resets_at] : null; };
+  const pick = (o) => (o && typeof o === 'object' ? [o.utilization, o.resets_at] : null);
+  const five = pick(body.five_hour) || listed('session');
+  const week = pick(body.seven_day) || listed('weekly_all');
+  const out = [five && limitWindow('5h', ...five), week && limitWindow('week', ...week)].filter(Boolean);
+  return out.length ? out : null;
+}
+
+function claudeToken(done) {
+  execFile('/usr/bin/security', ['find-generic-password', '-s', CLAUDE_KEYCHAIN, '-w'],
+    { timeout: 10000, maxBuffer: 256 * 1024 }, (err, out) => {
+      if (err) return done(null, 'login');
+      try {
+        const o = JSON.parse(out).claudeAiOauth || {};
+        if (typeof o.accessToken !== 'string' || !o.accessToken) return done(null, 'login');
+        if (Number(o.expiresAt) && Number(o.expiresAt) < Date.now()) return done(null, 'expired');
+        done(o.accessToken, null);
+      } catch { done(null, 'login'); }
+    });
+}
+
+function refreshClaudeLimits() {
+  const c = limitsCache.claude;
+  const now = Date.now();
+  if (c.busy || now < c.next) return;
+  c.busy = true;
+  const finish = (windows, error, wait) => {
+    c.busy = false;
+    c.next = Date.now() + wait;
+    if (windows) { c.windows = windows; c.at = Date.now(); }
+    c.error = error;
+    setImmediate(pushStreams);
+  };
+  if (CLAUDE_USAGE_FILE) {
+    let body = null;
+    try { body = JSON.parse(fs.readFileSync(CLAUDE_USAGE_FILE, 'utf8')); } catch {}
+    return finish(claudeWindows(body), body ? null : 'offline', 2000);
+  }
+  claudeToken(async (token, problem) => {
+    // A missing or expired login is cheap to check again: no network.
+    if (!token) return finish(null, problem, MINUTE);
+    try {
+      const r = await fetch(CLAUDE_USAGE_URL, {
+        headers: { Authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20', Accept: 'application/json', 'User-Agent': 'ai-flows' },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (r.status === 401 || r.status === 403) return finish(null, 'expired', MINUTE);
+      if (r.status === 429) {
+        const after = Number(r.headers.get('retry-after'));
+        return finish(null, null, Math.max(CLAUDE_USAGE_EVERY, Math.min(Number.isFinite(after) ? after * 1000 : 0, HOUR)));
+      }
+      if (!r.ok) return finish(null, 'offline', CLAUDE_USAGE_EVERY);
+      const windows = claudeWindows(await r.json());
+      finish(windows, windows ? null : 'unknown', CLAUDE_USAGE_EVERY);
+    } catch {
+      finish(null, 'offline', MINUTE);
+    }
+  });
+}
+
+// The rollout Codex wrote to last: the newest thread we know, or else the
+// newest file in the newest day folder (sessions/YYYY/MM/DD).
+function newestCodexRollout() {
+  let best = null;
+  for (const t of codexThreads.values()) {
+    if (inCodex(t.rollout) && (!best || t.updatedAt > best.updatedAt)) best = t;
+  }
+  if (best) return best.rollout;
+  const desc = (dir) => { try { return fs.readdirSync(dir).filter((n) => /^\d+$/.test(n)).sort((a, b) => b - a); } catch { return []; } };
+  const root = path.join(CODEX_HOME, 'sessions');
+  for (const y of desc(root)) for (const m of desc(path.join(root, y))) for (const d of desc(path.join(root, y, m))) {
+    const dir = path.join(root, y, m, d);
+    let names = [];
+    try { names = fs.readdirSync(dir).filter((n) => /^rollout-.*\.jsonl$/.test(n)); } catch {}
+    const files = names.map((n) => ({ fp: path.join(dir, n), st: safeStat(path.join(dir, n)) }))
+      .filter((f) => f.st && f.st.isFile()).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs);
+    if (files.length) return files[0].fp;
+  }
+  return null;
+}
+
+function codexLimitsFrom(file, size) {
+  const want = Math.min(size, 2 * 1024 * 1024);
+  const buf = Buffer.alloc(want);
+  const fd = fs.openSync(file, 'r');
+  try { fs.readSync(fd, buf, 0, want, size - want); } finally { fs.closeSync(fd); }
+  const lines = buf.toString('utf8').split('\n');
+  let fallback = null;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].includes('"rate_limits"')) continue;
+    let e;
+    try { e = JSON.parse(lines[i]); } catch { continue; }
+    const rl = e && e.payload && e.payload.rate_limits;
+    if (!rl || typeof rl !== 'object') continue;
+    const hit = { rl, ts: Date.parse(e.timestamp) || 0 };
+    // Codex can list more than one limit; "codex" is the plan's own.
+    if (!rl.limit_id || rl.limit_id === 'codex') return hit;
+    if (!fallback) fallback = hit;
+  }
+  return fallback;
+}
+
+function codexWindow(w, ts) {
+  if (!w || typeof w !== 'object') return null;
+  const min = Number(w.window_minutes);
+  const key = min === 300 ? '5h' : min === 10080 ? 'week' : Number.isFinite(min) && min > 0 ? `${min}m` : null;
+  if (!key) return null;
+  const resets = Number(w.resets_at) ? Number(w.resets_at) * 1000
+    : Number.isFinite(Number(w.resets_in_seconds)) && ts ? ts + Number(w.resets_in_seconds) * 1000 : null;
+  return limitWindow(key, w.used_percent, resets);
+}
+
+function refreshCodexLimits() {
+  const c = limitsCache.codex;
+  const now = Date.now();
+  if (now < c.next) return;
+  c.next = now + CODEX_LIMITS_EVERY;
+  const file = newestCodexRollout();
+  const st = file && safeStat(file);
+  if (!st) return;
+  if (file === c.file && st.size === c.size) return;
+  c.file = file;
+  c.size = st.size;
+  const hit = codexLimitsFrom(file, st.size);
+  if (!hit) return;
+  const windows = [codexWindow(hit.rl.primary, hit.ts), codexWindow(hit.rl.secondary, hit.ts)].filter(Boolean);
+  if (windows.length) { c.windows = windows; c.at = hit.ts || st.mtimeMs; }
+}
+
+// A window whose reset time has passed starts again at 0%.
+const current = (windows, now) => windows.map((w) => (w.resetsAt && w.resetsAt <= now ? { ...w, pct: 0, resetsAt: null } : w));
+
+function limitsState(watching) {
+  const on = settings.limits;
+  if (!on.claude && !on.codex) return null;
+  if (watching) {
+    if (on.claude) try { refreshClaudeLimits(); } catch (err) { logOnce('claude limits', err); }
+    if (on.codex) try { refreshCodexLimits(); } catch (err) { logOnce('codex limits', err); }
+  }
+  const now = Date.now();
+  const out = [];
+  const cl = limitsCache.claude;
+  if (on.claude && (cl.windows || (cl.error && cl.error !== 'login'))) out.push({ tool: 'claude', name: 'Claude', windows: cl.windows ? current(cl.windows, now) : [], at: cl.at, error: cl.error });
+  const cx = limitsCache.codex;
+  if (on.codex && cx.windows) out.push({ tool: 'codex', name: 'Codex', windows: current(cx.windows, now), at: cx.at, error: null });
+  return out;
+}
+
 // ---------------------------------------------------------------- state
 
 const STATUS_RANK = { permission: 0, question: 1, working: 2, error: 3, interrupted: 4, stale: 5, done: 6, idle: 7, ended: 8 };
@@ -1138,7 +1334,7 @@ function buildSession(sid) {
   };
 }
 
-function computeState(windowMin) {
+function computeState(windowMin, watching = false) {
   readHookLog();
   scanTranscripts();
   scanDesktop();
@@ -1189,6 +1385,8 @@ function computeState(windowMin) {
     notify: settings.notify,
     openVia: settings.openVia,
     toolLabels: settings.toolLabels,
+    limits: limitsState(watching),
+    limitsOn: settings.limits,
     notifier: notifierAvailable(),
     sessions,
   };
@@ -1255,7 +1453,7 @@ function pushStreams() {
     let body = byWindow.get(c.windowMin);
     if (body === undefined) {
       try {
-        const { now, ...rest } = computeState(c.windowMin);
+        const { now, ...rest } = computeState(c.windowMin, true);
         body = JSON.stringify(rest);
       } catch (err) {
         logOnce('state', err);
@@ -1291,16 +1489,31 @@ const NOTIFY_DIR = path.join(EVENTS_DIR, 'notify');
 //               the keyboard focus; the browser may ask for permission.
 const OPEN_VIA = ['server', 'browser'];
 // toolLabels: each mini row names its AI tool (Claude, Codex). Off by default.
-const DEFAULT_SETTINGS = { notify: true, openVia: 'server', toolLabels: false };
+// limits: per AI tool, a bar with its 5-hour and weekly limit. On by default;
+// Claude's reads your login from the keychain (see "usage limits").
+// toolLabels stays off by default.
+const LIMIT_TOOLS = ['claude', 'codex'];
+const DEFAULT_SETTINGS = { notify: true, openVia: 'server', toolLabels: false, limits: { claude: true, codex: true } };
+
+// Also takes the single on/off of earlier versions.
+function limitsSetting(v) {
+  const out = {};
+  for (const t of LIMIT_TOOLS) {
+    out[t] = typeof v === 'boolean' ? v
+      : v && typeof v === 'object' && typeof v[t] === 'boolean' ? v[t] : DEFAULT_SETTINGS.limits[t];
+  }
+  return out;
+}
 
 function loadSettings() {
   try {
     const s = { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
     if (!OPEN_VIA.includes(s.openVia)) s.openVia = DEFAULT_SETTINGS.openVia;
     if (typeof s.toolLabels !== 'boolean') s.toolLabels = DEFAULT_SETTINGS.toolLabels;
+    s.limits = limitsSetting(s.limits);
     return s;
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return { ...DEFAULT_SETTINGS, limits: { ...DEFAULT_SETTINGS.limits } };
   }
 }
 let settings = loadSettings();
@@ -1426,6 +1639,16 @@ async function handleSettings(req, res) {
       saveSettings();
       pushStreams();
     }
+    if (body && body.limits && typeof body.limits === 'object') {
+      const next = { ...settings.limits };
+      for (const t of LIMIT_TOOLS) if (typeof body.limits[t] === 'boolean') next[t] = body.limits[t];
+      // Turned on: fetch right away instead of after the usual wait.
+      if (next.claude && !settings.limits.claude) limitsCache.claude.next = 0;
+      if (next.codex && !settings.limits.codex) { limitsCache.codex.next = 0; limitsCache.codex.size = -1; }
+      settings.limits = next;
+      saveSettings();
+      pushStreams();
+    }
     if (body && typeof body.notify === 'boolean') {
       settings.notify = body.notify;
       saveSettings();
@@ -1435,7 +1658,7 @@ async function handleSettings(req, res) {
       }
     }
   }
-  sendJson(res, { notify: settings.notify, openVia: settings.openVia, toolLabels: settings.toolLabels, notifier: notifierAvailable() });
+  sendJson(res, { notify: settings.notify, openVia: settings.openVia, toolLabels: settings.toolLabels, limits: settings.limits, notifier: notifierAvailable() });
 }
 
 // One-time code: open.sh writes "<code> <unix time>" to an owner-only file and
@@ -1539,7 +1762,7 @@ function handle(req, res) {
   if (url.pathname.startsWith('/api/')) {
     if (!authorized(req, url)) return sendJson(res, { error: 'Geen toegang' }, 401);
     const windowMin = windowOf(Number(url.searchParams.get('window')) || 120);
-    if (url.pathname === '/api/state') return sendJson(res, computeState(windowMin));
+    if (url.pathname === '/api/state') return sendJson(res, computeState(windowMin, true));
     if (url.pathname === '/api/open') return openSession(req, res, url.searchParams.get('id'));
     if (url.pathname === '/api/mark') {
       return handleMark(req, res).catch((err) => {

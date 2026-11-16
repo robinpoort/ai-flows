@@ -19,6 +19,7 @@
   --green-soft: #e3f5ea;
   --amber: #8a5a00;         /* --sp-warn */
   --amber-soft: #fff5e0;
+  --amber-fill: #e8900c;    /* bars: brighter than the warn text colour */
   --red: #c0362c;           /* --sp-error */
   --red-soft: #fdeceb;
   --gray: #979ebb;
@@ -48,6 +49,7 @@
     --green-soft: #16301f;
     --amber: #f0b429;
     --amber-soft: #38301e;
+    --amber-fill: #f0b429;
     --red: #ff8a80;
     --red-soft: #3b2427;
     --gray: #979ebb;
@@ -190,7 +192,7 @@ h2 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
 .questions {
   position: sticky;
   top: 86px;
-  max-height: calc(100vh - 104px);
+  max-height: calc(100vh - 104px - var(--lim, 0px));
   overflow: auto;
   scrollbar-gutter: stable;
   padding: 16px;
@@ -474,6 +476,53 @@ body.no-questions[data-tab="questions"] .flows { display: block; }
 .ctx button:focus-visible { background: var(--accent); color: var(--on-accent); outline: none; }
 .ctx-sep { height: 1px; margin: 4px 6px; background: var(--line); }
 
+/* limits: per AI tool one meter fixed to the bottom of the window, the bar
+   for the 5-hour limit over the one for the week. app.js puts the bar's
+   height in --lim so nothing hides behind it. */
+
+body { padding-bottom: var(--lim, 0px); }
+.limits {
+  position: fixed;
+  z-index: 3;               /* above the mini head, under the settings */
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 28px;
+  padding: 7px 16px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted);
+}
+.lim-tool { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.lim-name { flex: none; font-weight: 650; color: var(--text); white-space: nowrap; }
+.lim-meter { display: grid; gap: 2px; width: 72px; flex: none; }
+.lim-track { position: relative; height: 3px; border-radius: 2px; background: var(--gray-soft); overflow: hidden; }
+.lim-fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: inherit; background: var(--accent); }
+.lim-track.warn .lim-fill { background: var(--amber-fill); }
+.lim-track.high .lim-fill { background: var(--red); }
+.lim-nums { display: flex; align-items: baseline; gap: 3px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lim-pct { font-weight: 600; color: var(--text); }
+.lim-sep { color: var(--faint); }
+.lim-sep + .lim-pct { font-weight: 400; color: var(--muted); }
+.lim-pct.warn { font-weight: 650; color: var(--amber); }
+.lim-pct.high { font-weight: 650; color: var(--red); }
+.lim-off { color: var(--faint); }
+
+/* Mini view: side by side when both fit with a readable meter, otherwise one
+   row each, names and numbers lined up. */
+body.is-mini .limits { gap: 4px 14px; padding: 6px 10px; font-size: 11px; line-height: 14px; }
+body.is-mini .lim-tool { flex: 1 1 auto; gap: 7px; }
+body.is-mini .lim-name { width: 44px; }
+body.is-mini .lim-meter { flex: 1 1 auto; width: auto; min-width: 44px; }
+body.is-mini .lim-nums { flex: none; min-width: 8.5ch; justify-content: flex-end; }
+
 /* toast */
 
 .toast {
@@ -483,7 +532,7 @@ body.no-questions[data-tab="questions"] .flows { display: block; }
      never wider than the window allows. */
   left: 16px;
   right: 16px;
-  bottom: 20px;
+  bottom: calc(20px + var(--lim, 0px));
   margin-inline: auto;
   width: fit-content;
   max-width: 600px;
@@ -538,7 +587,7 @@ body.no-questions[data-tab="questions"] .flows { display: block; }
 .toast-close:focus-visible { opacity: 1; background: color-mix(in srgb, var(--bg) 16%, transparent); outline: none; }
 /* Small windows, like the mini view: the full width along the bottom. */
 @media (max-width: 599px) {
-  .toast { left: 10px; right: 10px; bottom: 10px; width: auto; max-width: none; }
+  .toast { left: 10px; right: 10px; bottom: calc(10px + var(--lim, 0px)); width: auto; max-width: none; }
 }
 
 /* Only opacity is animated: the compositor handles it without repainting. */
@@ -615,7 +664,7 @@ body.is-mini .top,
 body.is-mini .tabs,
 body.is-mini .notice,
 body.is-mini .layout { display: none !important; }
-body.is-mini .mini { display: flex; flex-direction: column; min-height: 100vh; }
+body.is-mini .mini { display: flex; flex-direction: column; min-height: calc(100vh - var(--lim, 0px)); }
 
 .mini-head {
   position: sticky;
@@ -666,46 +715,24 @@ body.auto-mini .mini-expand { display: none; }
 /* Already the mini view: no button to open another one. */
 .mini-bar #open-mini { display: none; }
 
-/* In the mini view the settings fill the window: a sheet with a title and a
-   close button, instead of a pop-over squeezed under its button. */
-.sheet-head { display: none; }
+/* In the mini view the settings fill the window under the mini head (app.js
+   sets the top), instead of a pop-over squeezed under their button. That
+   button stays in place, pressed, with an X: the same spot opens and closes. */
 body.is-mini .settings-panel {
-  inset: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   width: auto;
   max-height: none;
-  padding: 0 12px 16px;
+  padding: 14px 12px 16px;
   border: 0;
   border-radius: 0;
   box-shadow: none;
 }
-body.is-mini .sheet-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 -12px 14px;
-  padding: 8px 8px 8px 14px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
-}
-.sheet-head h2 { flex: 1; margin: 0; font-size: 15px; }
-.sheet-close {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  flex: none;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-}
-.sheet-close:hover { background: var(--gray-soft); color: var(--text); }
-.sheet-close:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.sheet-close svg { width: 15px; height: 15px; }
+#settings-button[aria-expanded="true"] { color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: var(--accent-soft); }
+#settings-button .icon-close { display: none; }
+body.is-mini #settings-button[aria-expanded="true"] .icon-open { display: none; }
+body.is-mini #settings-button[aria-expanded="true"] .icon-close { display: block; }
 
 .mini-body { padding: 4px 4px 10px; }
 .mini-label {
@@ -793,7 +820,8 @@ body.is-mini .sheet-head {
 @media (max-width: 219px), (max-height: 159px) {
   html:has(body.is-mini) { overflow: hidden; }
   body.is-mini .mini-head,
-  body.is-mini .mini-body { display: none; }
+  body.is-mini .mini-body,
+  body.is-mini .limits { display: none; }
   body.is-mini .mini-micro {
     display: grid;
     grid-template-columns: 1fr 1fr;

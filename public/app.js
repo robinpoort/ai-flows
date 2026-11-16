@@ -563,6 +563,7 @@
     for (const el of $$('[data-count="flows"]')) setText(el, sessions.length);
     { const t = questions.length ? `(${questions.length}) AI Flows` : 'AI Flows'; if (document.title !== t) document.title = t; }
     renderMini(sessions, questions);
+    renderLimits();
     syncBell();
 
     const notice = $('#notice');
@@ -575,6 +576,67 @@
     setLive(connected);
     announce(questions);
   }
+
+  // ---------------------------------------------------------------- limits
+
+  // Per AI tool one small meter fixed to the bottom: the bar for the 5-hour
+  // limit over the one for the week, and both percentages. With one tool on,
+  // it says "Limiet" instead of the tool's name. Reset times and how old the
+  // numbers are sit in the tooltip.
+  const limitsEl = $('#limits');
+  const LIMIT_PROBLEM = {
+    expired: 'login verlopen; die wordt vernieuwd zodra je Claude gebruikt',
+    offline: 'niet bereikbaar',
+    unknown: 'onbekend antwoord',
+  };
+
+  function limitLabel(key) {
+    if (key === '5h') return '5 uur';
+    if (key === 'week') return 'Week';
+    return `${Math.round(parseInt(key, 10) / 60) || 0} uur`;
+  }
+
+  function resetText(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const time = d.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
+    return d.toDateString() === new Date().toDateString()
+      ? `reset om ${time}`
+      : `reset ${d.toLocaleDateString('nl-NL', { weekday: 'short' })} ${time}`;
+  }
+
+  const limitLevel = (pct) => (pct >= 90 ? 'high' : pct >= 75 ? 'warn' : '');
+
+  function limitTool(t, label) {
+    if (!t.windows.length) {
+      const why = `${t.name}: ${LIMIT_PROBLEM[t.error] || 'niet beschikbaar'}`;
+      return `<div class="lim-tool off" role="img" aria-label="${esc(why)}" title="${esc(why)}"><span class="lim-name">${esc(label)}</span><span class="lim-off">niet beschikbaar</span></div>`;
+    }
+    const wins = t.windows.map((w) => ({ ...w, pct: Math.round(w.pct) }));
+    const lines = wins.map((w) => `${limitLabel(w.key)}: ${w.pct}% gebruikt${w.resetsAt ? `, ${resetText(w.resetsAt)}` : ''}`);
+    if (t.at && Date.now() - t.at > 30 * 60000) lines.push(`Gemeten ${ago(t.at)}`);
+    const tracks = wins.map((w) => `<span class="lim-track ${limitLevel(w.pct)}"><span class="lim-fill" data-p="${w.pct}"></span></span>`).join('');
+    const nums = wins.map((w) => `<span class="lim-pct ${limitLevel(w.pct)}">${w.pct}%</span>`).join('<span class="lim-sep">/</span>');
+    return `<div class="lim-tool" role="img" aria-label="${esc(`${t.name}. ${lines.join('. ')}`)}" title="${esc([t.name, ...lines].join('\n'))}">` +
+      `<span class="lim-name">${esc(label)}</span><span class="lim-meter">${tracks}</span><span class="lim-nums">${nums}</span></div>`;
+  }
+
+  function renderLimits() {
+    const list = state && Array.isArray(state.limits) ? state.limits : [];
+    setHTML(limitsEl, list.map((t) => limitTool(t, list.length === 1 ? 'Limiet' : t.name)).join(''));
+    // Widths through the style object: the page's CSP blocks style attributes.
+    for (const f of $$('.lim-fill', limitsEl)) f.style.width = `${f.dataset.p}%`;
+    setHidden(limitsEl, list.length === 0);
+    syncLimitsHeight();
+  }
+
+  // Room at the bottom of the page for the bar (0 when hidden, also in micro).
+  function syncLimitsHeight() {
+    const h = limitsEl.hidden ? 0 : limitsEl.offsetHeight;
+    const v = `${h}px`;
+    if (document.body.style.getPropertyValue('--lim') !== v) document.body.style.setProperty('--lim', v);
+  }
+  if (window.ResizeObserver) new ResizeObserver(syncLimitsHeight).observe(limitsEl);
 
   function windowLabel(min) {
     if (min < 60) return `${min} min`;
@@ -693,17 +755,24 @@
     const via = (state && state.openVia) || 'server';
     for (const r of settingsPanel.querySelectorAll('input[name="open-via"]')) r.checked = r.value === via;
     settingsPanel.querySelector('input[name="tool-labels"]').checked = !!(state && state.toolLabels);
+    const limitsOn = (state && state.limitsOn) || {};
+    settingsPanel.querySelector('input[name="limit-claude"]').checked = !!limitsOn.claude;
+    settingsPanel.querySelector('input[name="limit-codex"]').checked = !!limitsOn.codex;
   }
 
   function toggleSettings(open) {
+    const mini = document.body.classList.contains('is-mini');
     settingsPanel.hidden = !open;
     settingsButton.setAttribute('aria-expanded', String(open));
+    setTitle(settingsButton, open && mini ? 'Sluiten' : 'Instellingen');
     if (!open) return;
     syncSettings();
-    if (document.body.classList.contains('is-mini')) {
+    if (mini) {
       // The mini view has no room for a pop-over: the panel fills the window
-      // (see app.css), with its own title and close button.
-      settingsPanel.style.top = settingsPanel.style.right = settingsPanel.style.maxHeight = '';
+      // under the mini head (see app.css), where the settings button, now an
+      // X, closes it again.
+      settingsPanel.style.right = settingsPanel.style.maxHeight = '';
+      settingsPanel.style.top = `${Math.round($('.mini-head').getBoundingClientRect().bottom)}px`;
     } else {
       const r = settingsButton.getBoundingClientRect();
       // clientWidth leaves out a classic scrollbar, as fixed positioning does.
@@ -718,7 +787,6 @@
   }
 
   settingsButton.addEventListener('click', () => toggleSettings(settingsPanel.hidden));
-  $('#settings-close').addEventListener('click', () => { toggleSettings(false); settingsButton.focus(); });
   document.addEventListener('pointerdown', (e) => {
     if (!settingsPanel.hidden && !e.target.closest('#settings-panel, #settings-button')) toggleSettings(false);
   });
@@ -729,7 +797,9 @@
 
   settingsPanel.addEventListener('change', async (e) => {
     const change = e.target.name === 'open-via' ? { openVia: e.target.value }
-      : e.target.name === 'tool-labels' ? { toolLabels: e.target.checked } : null;
+      : e.target.name === 'tool-labels' ? { toolLabels: e.target.checked }
+      : e.target.name === 'limit-claude' ? { limits: { claude: e.target.checked } }
+      : e.target.name === 'limit-codex' ? { limits: { codex: e.target.checked } } : null;
     if (!change) return;
     try {
       const r = await fetch('/api/settings', {
@@ -739,11 +809,24 @@
       });
       if (r.status === 401) { showLocked(); return; }
       const d = await r.json();
-      if (state) { state.openVia = d.openVia; state.toolLabels = d.toolLabels; }
+      if (state) {
+        state.openVia = d.openVia;
+        state.toolLabels = d.toolLabels;
+        state.limitsOn = d.limits;
+        // A tool turned off leaves at once; one turned on follows with the
+        // next update from the server.
+        if (state.limits) state.limits = state.limits.filter((t) => d.limits[t.tool]);
+      }
       syncSettings();
       if ('toolLabels' in change) {
         render();
         toast(d.toolLabels ? 'AI-tool zichtbaar.' : 'AI-tool verborgen.');
+        return;
+      }
+      if ('limits' in change) {
+        render();
+        const [tool] = Object.keys(change.limits);
+        toast(`${tool === 'codex' ? 'Codex' : 'Claude'}-limieten ${d.limits[tool] ? 'aan' : 'uit'}.`);
         return;
       }
       toast(d.openVia === 'browser' ? 'Opent via je browser.' : 'Opent zonder vraag.');

@@ -36,20 +36,15 @@
         <span id="bell-text">Meldingen uit</span>
       </button>
       <button type="button" class="bell" id="settings-button" aria-haspopup="dialog" aria-expanded="false" aria-controls="settings-panel" title="Instellingen">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+        <svg class="icon-open" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+        <!-- In the mini view the open settings are closed with this same button. -->
+        <svg class="icon-close" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
         <span>Instellingen</span>
       </button>
     </div>
   </header>
 
-  <section class="settings-panel" id="settings-panel" role="dialog" aria-labelledby="settings-heading" hidden>
-    <!-- Only shown in the mini view, where the panel fills the window. -->
-    <div class="sheet-head">
-      <h2 id="settings-heading">Instellingen</h2>
-      <button type="button" class="sheet-close" id="settings-close" aria-label="Sluiten" title="Sluiten">
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-      </button>
-    </div>
+  <section class="settings-panel" id="settings-panel" role="dialog" aria-label="Instellingen" hidden>
     <h3 id="settings-title">Sessies openen</h3>
     <label class="choice">
       <input type="radio" name="open-via" value="server">
@@ -58,6 +53,15 @@
     <label class="choice">
       <input type="radio" name="open-via" value="browser">
       <span><strong>Via je browser</strong><small>Opent vooraan. Je browser vraagt soms om toestemming.</small></span>
+    </label>
+    <h3 class="settings-section">Limieten</h3>
+    <label class="choice">
+      <input type="checkbox" name="limit-claude">
+      <span><strong>Claude</strong><small>Via je Claude-login.</small></span>
+    </label>
+    <label class="choice">
+      <input type="checkbox" name="limit-codex">
+      <span><strong>Codex</strong><small>Uit je Codex-sessies.</small></span>
     </label>
     <h3 class="settings-section">Mini-venster</h3>
     <label class="choice">
@@ -141,6 +145,8 @@
     <div class="ctx-sep" role="separator"></div>
     <button type="button" role="menuitem" data-ctx="close">Sluit sessie</button>
   </div>
+
+  <footer class="limits" id="limits" aria-label="Limieten" hidden></footer>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
