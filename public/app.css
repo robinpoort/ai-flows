@@ -639,6 +639,8 @@ body.is-mini .mini { display: flex; flex-direction: column; min-height: 100vh; }
   text-align: left;
   cursor: pointer;
 }
+.mini-list > .mfolder:not(:first-child) { margin-top: 14px; }
+.mini-list:not([hidden]) + .mini-label { margin-top: 20px; }
 .mfolder:hover { color: var(--text); background: var(--surface-2); }
 .mfolder:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .mfolder .chev { width: 12px; height: 12px; }
