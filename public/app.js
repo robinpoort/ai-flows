@@ -123,13 +123,6 @@
     ended: { label: 'Afgesloten', cls: 'idle' },
   };
 
-  const GROUPS = [
-    { key: 'waiting', title: 'Wacht op jou', match: (s) => s.status === 'question' || s.status === 'permission' },
-    { key: 'working', title: 'Nu bezig', match: (s) => s.status === 'working' },
-    { key: 'attention', title: 'Even kijken', match: (s) => ['error', 'stale', 'interrupted'].includes(s.status) },
-    { key: 'done', title: 'Recent klaar', match: (s) => ['done', 'idle', 'ended'].includes(s.status) },
-  ];
-
   const QUESTION_KIND = {
     wrap: 'Vraag',
     text: 'Vraag in het antwoord',
@@ -355,6 +348,76 @@
     };
   }
 
+  // Blue means "look at me": an unseen answer, or a question. Both can be
+  // marked read, which turns them grey.
+  function needsReading(s) { return s.unread || s.status === 'question' || s.status === 'permission'; }
+
+  // ---------------------------------------------------------------- folders
+
+  // Sessions are grouped by the folder they were started in, A to Z, like the
+  // Claude app's sidebar. A folder can be folded shut; that is remembered per
+  // browser and shared by the full dashboard and the mini view.
+  const collapsed = new Set(store.get('collapsed', []));
+
+  function byFolder(sessions) {
+    const groups = new Map();
+    for (const s of sessions) {
+      const f = s.folder || { key: '', name: 'Zonder map', detail: '' };
+      let g = groups.get(f.key);
+      if (!g) groups.set(f.key, (g = { key: f.key, name: f.name, detail: f.detail, items: [] }));
+      g.items.push(s);
+    }
+    const list = [...groups.values()];
+    // Two folders with the same name: add the folder above to tell them apart.
+    const seen = new Map();
+    for (const g of list) seen.set(g.name, (seen.get(g.name) || 0) + 1);
+    for (const g of list) if (seen.get(g.name) > 1 && g.detail) g.name = g.detail.split('/').slice(-2).join('/');
+    return list.sort((a, b) => a.name.localeCompare(b.name, 'nl', { sensitivity: 'base', numeric: true }) || a.key.localeCompare(b.key));
+  }
+
+  const ICON_CHEVRON = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  function folderSummary(items) {
+    const waiting = items.filter((s) => s.status === 'question' || s.status === 'permission').length;
+    const working = items.filter((s) => s.status === 'working').length;
+    const unseen = items.filter((s) => s.unread).length;
+    return [waiting && `${waiting} wacht`, working && `${working} bezig`, unseen && `${unseen} nieuw`].filter(Boolean).join(' · ');
+  }
+
+  // Folder headers and cards in one flat list, so renderList keeps patching
+  // cards in place. A shut folder shows what it holds in its header, and turns
+  // its count blue when something in it needs you.
+  function grouped(list, sessions, card, cls) {
+    const out = [];
+    for (const g of byFolder(sessions)) {
+      const fold = `${list}:${g.key}`;
+      const open = !collapsed.has(fold);
+      const hot = !open && g.items.some(needsReading);
+      const sum = open ? '' : folderSummary(g.items);
+      const key = `g:${list}:${g.key}`;
+      out.push({
+        key,
+        html: `<button type="button" class="${cls}${hot ? ' hot' : ''}" data-key="${esc(key)}" data-act="fold" data-fold="${esc(fold)}" aria-expanded="${open}" title="${esc(g.detail || g.name)}">${ICON_CHEVRON}<span class="fname">${esc(g.name)}</span><span class="count">${g.items.length}</span>${sum ? `<span class="fsum">${esc(sum)}</span>` : ''}</button>`,
+      });
+      if (open) for (const s of g.items) out.push(card(s));
+    }
+    return out;
+  }
+
+  function toggleFolder(fold) {
+    if (collapsed.has(fold)) collapsed.delete(fold); else collapsed.add(fold);
+    store.set('collapsed', [...collapsed].slice(-60));
+    render();
+  }
+
+  // Folding in the mini window shows up in the full dashboard, and back.
+  window.addEventListener('storage', (e) => {
+    if (e.key !== 'ai-flows:collapsed') return;
+    collapsed.clear();
+    for (const k of store.get('collapsed', [])) collapsed.add(k);
+    render();
+  });
+
   // ---------------------------------------------------------------- mini rows
 
   const MINI_CLASS = {
@@ -390,9 +453,11 @@
     const qIds = new Set(questions.map((s) => s.id));
     const flows = sessions.filter((s) => !qIds.has(s.id));
 
-    renderList($('#mini-questions'), questions.map((s) => miniRow(s, true)));
-    renderList($('#mini-flows'), flows.map((s) => miniRow(s, false)));
-    setHidden($('#mini-q-none'), questions.length > 0);
+    renderList($('#mini-questions'), grouped('q', questions, (s) => miniRow(s, true), 'mfolder'));
+    renderList($('#mini-flows'), grouped('f', flows, (s) => miniRow(s, false), 'mfolder'));
+    // No open questions: leave that whole part out.
+    setHidden($('#mini-q-label'), questions.length === 0);
+    setHidden($('#mini-questions'), questions.length === 0);
     setHidden($('#mini-f-none'), flows.length > 0);
 
     const parts = [];
@@ -472,24 +537,11 @@
       .filter((s) => s.question && (s.status === 'question' || s.status === 'permission'))
       .sort((a, b) => ((a.status === 'permission' ? 0 : 1) - (b.status === 'permission' ? 0 : 1)) || ((b.question.ts || 0) - (a.question.ts || 0)));
 
-    renderList($('#question-list'), questions.map(questionCard));
-    setHidden($('#question-empty'), questions.length > 0);
+    renderList($('#question-list'), grouped('q', questions, questionCard, 'folder'));
+    // No open questions: the questions panel (and its tab) steps aside.
+    document.body.classList.toggle('no-questions', questions.length === 0);
 
-    const groupsRoot = $('#flow-groups');
-    for (const g of GROUPS) {
-      let sec = $(`[data-group="${g.key}"]`, groupsRoot);
-      if (!sec) {
-        sec = document.createElement('div');
-        sec.className = 'group';
-        sec.dataset.group = g.key;
-        sec.innerHTML = `<h3 class="group-title">${esc(g.title)} <span class="count"></span></h3><div class="grid" id="grid-${g.key}"></div>`;
-        groupsRoot.appendChild(sec);
-      }
-      const items = sessions.filter(g.match);
-      setHidden(sec, items.length === 0);
-      setText($('.count', sec), items.length);
-      renderList($('.grid', sec), items.map(flowCard));
-    }
+    renderList($('#flow-grid'), grouped('f', sessions, flowCard, 'folder'));
     setHidden($('#flow-empty'), sessions.length > 0);
 
     const working = sessions.filter((s) => s.status === 'working').length;
@@ -549,12 +601,22 @@
   // ---------------------------------------------------------------- actions
 
   let toastTimer = null;
-  function toast(text) {
+  // action: { label, run } adds a button, such as "Ongedaan maken".
+  function toast(text, action) {
     const t = $('#toast');
-    t.textContent = text;
+    t.replaceChildren(document.createTextNode(text));
+    if (action) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'toast-act';
+      b.textContent = action.label;
+      b.addEventListener('click', () => { t.classList.remove('show'); action.run(); }, { once: true });
+      t.append(b);
+    }
+    t.classList.toggle('has-action', !!action);
     t.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
+    toastTimer = setTimeout(() => t.classList.remove('show'), action ? 7000 : 3200);
   }
 
   async function copy(text) {
@@ -655,8 +717,9 @@
 
   // ---------------------------------------------------------------- right-click menu
 
-  // Right-click a flow (card, question or mini row) to mark it read or unread,
-  // or to open it. "Unread" lasts until you open the session in Claude.
+  // Right-click a flow (card, question or mini row) to open it, mark it read or
+  // unread, or close it. "Unread" lasts until you open the session in Claude;
+  // "closed" until you send it a new message or it asks something new.
   const ctx = document.getElementById('ctx');
   let ctxSid = null;
 
@@ -677,20 +740,25 @@
     ctx.querySelector('button:not([hidden])').focus();
   }
 
-  // Blue means "look at me": an unseen answer, or a question. Both can be
-  // marked read, which turns them grey.
-  const needsReading = (s) => s.unread || s.status === 'question' || s.status === 'permission';
-
-  async function markSession(s, unread) {
+  // kind: 'read', 'unread', 'closed' or 'open' (the undo of 'closed').
+  async function markSession(s, kind) {
     try {
       const r = await fetch('/api/mark', {
         method: 'POST',
         headers: apiHeaders({ 'X-AI-Flows': '1', 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ id: s.id, unread }),
+        body: JSON.stringify({ id: s.id, mark: kind }),
       });
       if (r.status === 401) { showLocked(); return; }
       if (!r.ok) throw new Error(String(r.status));
       // Show it straight away; the next update from the server confirms it.
+      if (kind === 'closed') {
+        if (state) state.sessions = (state.sessions || []).filter((x) => x.id !== s.id);
+        render();
+        toast(`“${s.title}” is gesloten tot er iets nieuws is.`, { label: 'Ongedaan maken', run: () => markSession(s, 'open') });
+        return;
+      }
+      if (kind === 'open') { toast('De sessie staat er weer.'); return; }
+      const unread = kind === 'unread';
       if (!unread && (s.status === 'question' || s.status === 'permission')) { s.status = 'done'; s.question = null; }
       s.unread = unread && !['working', 'permission', 'question'].includes(s.status);
       render();
@@ -715,7 +783,8 @@
     closeCtx();
     if (!s) return;
     if (b.dataset.ctx === 'open') openSession(s);
-    else markSession(s, !needsReading(s));
+    else if (b.dataset.ctx === 'close') markSession(s, 'closed');
+    else markSession(s, needsReading(s) ? 'read' : 'unread');
   });
 
   ctx.addEventListener('keydown', (e) => {
@@ -752,6 +821,8 @@
     } else if (act === 'copy') {
       await copy(String(el.dataset.text).replace(INVISIBLE, ''));
       toast('Gekopieerd. Plak het in je terminal.');
+    } else if (act === 'fold') {
+      toggleFolder(el.dataset.fold);
     } else if (act === 'toggle') {
       const key = el.dataset.key;
       if (expanded.has(key)) expanded.delete(key); else expanded.add(key);

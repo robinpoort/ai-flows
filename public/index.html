@@ -70,11 +70,6 @@
       </div>
       <p class="hint">Klik een antwoord: het wordt gekopieerd en de sessie gaat open in Claude. Plak het daar met ⌘V.</p>
       <div class="list" id="question-list"></div>
-      <div class="empty" id="question-empty" hidden>
-        <svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20" fill="none" stroke="currentColor" stroke-width="2.5"/><path d="M15 24.5l6 6 12-13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <strong>Geen open vragen</strong>
-        <span>Zodra een AI-sessie iets van je nodig heeft, staat het hier.</span>
-      </div>
     </section>
 
     <section class="panel flows" id="flows" aria-labelledby="f-title">
@@ -82,7 +77,7 @@
         <h2 id="f-title">Flows</h2>
         <span class="sub" id="flows-sub"></span>
       </div>
-      <div id="flow-groups"></div>
+      <div class="grid" id="flow-grid"></div>
       <div class="empty" id="flow-empty" hidden>
         <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M8 30c5-14 10-14 16 0s11 14 16 0" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
         <strong>Rustig</strong>
@@ -107,7 +102,6 @@
     <div class="mini-body">
       <div class="mini-label" id="mini-q-label">Vragen</div>
       <div class="mini-list" id="mini-questions"></div>
-      <div class="mini-none" id="mini-q-none">Geen open vragen</div>
       <div class="mini-label" id="mini-f-label">Flows</div>
       <div class="mini-list" id="mini-flows"></div>
       <div class="mini-none" id="mini-f-none">Niets actief</div>
@@ -134,6 +128,8 @@
   <div class="ctx" id="ctx" role="menu" aria-label="Flow" hidden>
     <button type="button" role="menuitem" data-ctx="open">Open in Claude</button>
     <button type="button" role="menuitem" data-ctx="mark">Markeer als ongelezen</button>
+    <div class="ctx-sep" role="separator"></div>
+    <button type="button" role="menuitem" data-ctx="close">Sluit sessie</button>
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>

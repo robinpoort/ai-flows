@@ -214,9 +214,44 @@ h2 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
 
 .list { display: flex; flex-direction: column; gap: 12px; }
 
-.group { margin-bottom: 26px; }
-.group-title { display: flex; align-items: center; gap: 8px; margin: 0 2px 10px; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+/* No open questions: the questions panel and its tab step aside, and the
+   flows get the full width. */
+body.no-questions .questions,
+body.no-questions .tabs { display: none; }
+body.no-questions .layout { grid-template-columns: minmax(0, 1fr); }
+body.no-questions[data-tab="questions"] .flows { display: block; }
+
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; }
+
+/* Folder headers: the folder a session was started in, like Claude's sidebar.
+   Click to fold a folder shut. */
+.folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  margin: 0;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font-size: 14.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.grid > .folder { grid-column: 1 / -1; }
+.grid > .folder:not(:first-child), .list > .folder:not(:first-child) { margin-top: 10px; }
+.folder:hover { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
+.folder:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.folder .chev, .mfolder .chev { flex: none; transition: transform .15s; }
+.folder .chev { width: 16px; height: 16px; }
+.folder[aria-expanded="false"] .chev, .mfolder[aria-expanded="false"] .chev { transform: rotate(-90deg); }
+.folder .fname, .mfolder .fname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder .fsum { margin-left: auto; padding-left: 8px; font-size: 13px; font-weight: 500; white-space: nowrap; }
+.folder.hot .count, .mfolder.hot .count { background: var(--accent); color: var(--on-accent); }
 
 .empty {
   display: flex;
@@ -432,6 +467,7 @@ h2 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
 }
 .ctx button:hover,
 .ctx button:focus-visible { background: var(--accent); color: var(--on-accent); outline: none; }
+.ctx-sep { height: 1px; margin: 4px 6px; background: var(--line); }
 
 /* toast */
 
@@ -452,6 +488,18 @@ h2 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
   max-width: calc(100vw - 32px);
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.show.has-action { pointer-events: auto; }
+.toast-act {
+  margin-left: 14px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
 
 /* Only opacity is animated: the compositor handles it without repainting. */
 @keyframes breathe {
@@ -573,6 +621,29 @@ body.is-mini .mini { display: flex; flex-direction: column; min-height: 100vh; }
   color: var(--faint);
 }
 .mini-none { padding: 4px 8px 6px; font-size: 12.5px; color: var(--faint); }
+
+.mfolder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 4px 0 0;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+.mfolder:hover { color: var(--text); background: var(--surface-2); }
+.mfolder:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mfolder .chev { width: 12px; height: 12px; }
+.mfolder .count { min-width: 18px; height: 18px; padding: 0 5px; font-size: 11px; }
+.mfolder .fsum { margin-left: auto; padding-left: 6px; font-size: 11.5px; font-weight: 500; color: var(--faint); white-space: nowrap; }
 
 .mrow {
   display: grid;

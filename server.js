@@ -151,6 +151,23 @@ function projectFromCwd(cwd) {
   return { name: path.basename(cwd) || rel, detail: rel };
 }
 
+// The folder a session belongs to, the way the Claude app groups its sidebar:
+// the folder it was started in, with a worktree counting as its repository. A
+// session started from another one sits with that one, as in the app.
+function folderOf(desk, cwd) {
+  for (let i = 0; i < 5 && desk && desk.parentLocalId; i++) {
+    const parent = desktopByLocal.get(desk.parentLocalId);
+    if (!parent) break;
+    desk = parent;
+  }
+  let dir = (desk && (desk.originCwd || desk.cwd)) || cwd;
+  if (!dir) return { key: '', name: 'Zonder map', detail: '' };
+  const wt = dir.match(/^(.*?)\/\.claude\/worktrees\/[^/]+/);
+  if (wt) dir = wt[1];
+  const rel = dir.startsWith(HOME) ? '~' + dir.slice(HOME.length) : dir;
+  return { key: dir, name: path.basename(dir) || rel, detail: rel };
+}
+
 // ---------------------------------------------------------------- hook events
 
 const logFiles = new Map(); // file -> { offset, rest }
@@ -477,6 +494,7 @@ function scanTranscripts() {
 
 const desktopFiles = new Map(); // file -> { mtimeMs, meta }
 let desktopByCli = new Map();
+let desktopByLocal = new Map();
 let desktopScanAt = 0;
 
 function scanDesktop() {
@@ -511,6 +529,8 @@ function scanDesktop() {
               title: d.title || null,
               archived: !!d.isArchived,
               cwd: d.cwd || null,
+              originCwd: d.originCwd || null,
+              parentLocalId: (d.spawnedFrom && typeof d.spawnedFrom.sessionId === 'string' && d.spawnedFrom.sessionId) || null,
               lastActivityAt: d.lastActivityAt || 0,
               lastUserAt: d.latestUserFrameAt || 0,
               lastFocusedAt: d.lastFocusedAt || 0,
@@ -531,6 +551,7 @@ function scanDesktop() {
     }
   }
   desktopByCli = byCli;
+  desktopByLocal = new Map([...desktopFiles.values()].map(({ meta }) => [meta.localId, meta]));
   // The session you have open in the app is the one you focused last.
   let latest = null;
   for (const { meta } of desktopFiles.values()) if (!latest || meta.lastFocusedAt > latest.lastFocusedAt) latest = meta;
@@ -555,10 +576,11 @@ function checkFront() {
 // session; this adds "it finished while you were looking at it".
 const seenAt = new Map(); // sid -> ms
 
-// Your own marks from the dashboard's right-click menu: { sid: { unread, read } }
-// (times in ms). "Unread" lasts until you open the session in Claude or mark it
-// read; "read" hides an unseen answer that finished before it. Kept in an
-// owner-only file so they survive a restart.
+// Your own marks from the dashboard's right-click menu: { sid: { unread, read,
+// closed } } (times in ms). "Unread" lasts until you open the session in
+// Claude or mark it read; "read" hides an unseen answer that finished before
+// it; "closed" hides the session until you send it a new message or it asks
+// something new. Kept in an owner-only file so they survive a restart.
 const MARKS_FILE = path.join(EVENTS_DIR, 'marks.json');
 let marks = new Map();
 try {
@@ -569,7 +591,7 @@ try {
 function saveMarks() {
   const now = Date.now();
   for (const [sid, m] of marks) {
-    if (now - Math.max(m.unread || 0, m.read || 0) > KEEP_MS) marks.delete(sid);
+    if (now - Math.max(m.unread || 0, m.read || 0, m.closed || 0) > KEEP_MS) marks.delete(sid);
   }
   fs.mkdirSync(EVENTS_DIR, { recursive: true, mode: 0o700 });
   const tmp = `${MARKS_FILE}.${process.pid}.tmp`;
@@ -703,6 +725,11 @@ function buildSession(sid) {
     unread = false;
   }
 
+  // Closed from the right-click menu: hidden until something new happens that
+  // needs you (a message you send, a new question).
+  const freshAt = Math.max((st.prompt && st.prompt.ts) || 0, (desk && desk.lastUserAt) || 0, (question && question.ts) || 0);
+  const closed = !!mark.closed && freshAt <= mark.closed;
+
   const recap = st.wrap && st.wrap.recap ? st.wrap.recap : (desk && desk.summary && desk.summary.status_detail) || null;
 
   return {
@@ -717,7 +744,9 @@ function buildSession(sid) {
     title: clip(String(title), 200),
     project: project.name,
     projectDetail: project.detail,
+    folder: folderOf(desk, cwd),
     cwd,
+    closed,
     app: isDesktop ? 'Claude-app' : 'Terminal',
     archived: desk ? desk.archived : false,
     unread,
@@ -762,6 +791,7 @@ function computeState(windowMin) {
     if (!s) continue;
     const live = s.status === 'working' || s.status === 'permission';
     if (s.archived && !live) continue;
+    if (s.closed) continue;
     if (now - s.lastTs > (live ? KEEP_MS : windowMs)) continue;
     sessions.push(s);
   }
@@ -1046,17 +1076,27 @@ async function handleClaim(req, res) {
   sendJson(res, { token: TOKEN.toString() });
 }
 
-// Mark a session read or unread from the right-click menu.
+// Mark a session from the right-click menu: read, unread, closed, or open
+// again (the undo of closed).
+const MARK_KINDS = ['read', 'unread', 'closed', 'open'];
 async function handleMark(req, res) {
   if (!isAction(req)) { res.writeHead(403); return res.end(); }
   const body = await readJson(req);
   const sid = body && typeof body.id === 'string' ? body.id : '';
-  if (!/^[A-Za-z0-9_-]{1,100}$/.test(sid) || typeof body.unread !== 'boolean') return sendJson(res, { error: 'Ongeldig' }, 400);
+  // { unread: true/false } is how pages from before "close" ask.
+  const kind = body && typeof body.mark === 'string' ? body.mark
+    : body && typeof body.unread === 'boolean' ? (body.unread ? 'unread' : 'read') : '';
+  if (!/^[A-Za-z0-9_-]{1,100}$/.test(sid) || !MARK_KINDS.includes(kind)) return sendJson(res, { error: 'Ongeldig' }, 400);
   const m = { ...(marks.get(sid) || {}) };
-  if (body.unread) m.unread = Date.now(); else { m.read = Date.now(); delete m.unread; }
-  marks.set(sid, m);
+  const now = Date.now();
+  if (kind === 'unread') m.unread = now;
+  else if (kind === 'read') { m.read = now; delete m.unread; }
+  else if (kind === 'closed') m.closed = now;
+  else delete m.closed;
+  if (Object.keys(m).length) marks.set(sid, m); else marks.delete(sid);
   saveMarks();
-  sendJson(res, { ok: true, unread: body.unread });
+  pushStreams();
+  sendJson(res, { ok: true, mark: kind });
 }
 
 // "Open in Claude" when openVia is 'server': no browser question, but Claude

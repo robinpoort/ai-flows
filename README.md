@@ -6,9 +6,12 @@ now, what is waiting for you, and what finished recently (last 30 minutes to
 when a new one comes in, and one click opens the session in the Claude app.
 
 - **Vragen voor jou**: permission prompts, choices, plans to approve and
-  questions at the end of a turn, with their answer options.
+  questions at the end of a turn, with their answer options. Only there while
+  something is open; otherwise the flows get the full width.
 - **Flows**: every recent session with its status, your last prompt, what it is
   doing right now (tool, subagents) or how it ended.
+- Both are **grouped by folder**, A to Z, like the Claude app's sidebar, and a
+  folder folds shut with a click.
 - **Mini view** for a corner of your screen, and **macOS notifications** that
   are withdrawn again once you answer.
 
@@ -230,6 +233,17 @@ a blue dot. Right-click a flow (card, question or mini row) to mark it unread
 (it stays blue until you open it in Claude) or read (also for one that stays
 blue when it should not). Marks are kept in `~/.claude/ai-flows/marks.json`.
 
+**Folders and closing.** Sessions are grouped by the folder they were started
+in (for the Claude app its `originCwd`; a worktree counts as its repository, and
+a session started from another one sits with that one, as in the app's
+sidebar). Folders are sorted A to Z; click a folder to fold it shut. A shut
+folder shows what it holds ("1 wacht · 2 bezig") and turns its count blue when
+something in it needs you. Folding is remembered per browser and shared with
+the mini view. Right-click a session and choose **Sluit sessie** to drop one you
+are done with, even inside the time window: it stays away until you send it a
+new message or it asks you something new, and the toast offers
+**Ongedaan maken**. Closing only hides it here; the session itself is untouched.
+
 **Notifications.** The server checks every 2 seconds. A question must stay open
 for 4 seconds before it is announced (no pop-up while you are already
 answering), questions that were open when the server started are skipped, and
@@ -245,8 +259,9 @@ wave (the flow), in front of a 33% white card (another session), all inside the
 192 square keyline. 16 px (white only) and 32 px (one tint) are drawn
 separately, and macOS rounds the corners.
 
-**Mini view.** One row per session: status dot, title and time; questions also
-show the question. It switches on in a window narrower than 360 px, with `?mini`
+**Mini view.** One row per session under its folder: status dot, title and
+time; questions also show the question, and without open questions that part
+is left out. It switches on in a window narrower than 360 px, with `?mini`
 at any size (`?full` forces the normal layout), or via **Mini-venster**, which
 opens a 320×460 pop-up. In another app, open http://127.0.0.1:4777/?mini. Below 220×160 only two counters remain.
 
