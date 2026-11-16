@@ -136,6 +136,7 @@
     Bash: 'Terminal', Read: 'Lezen', Edit: 'Bewerken', MultiEdit: 'Bewerken', Write: 'Schrijven',
     Grep: 'Zoeken', Glob: 'Bestanden zoeken', WebFetch: 'Webpagina', WebSearch: 'Webzoeken',
     Agent: 'Subagent', Task: 'Subagent', Skill: 'Skill', ToolSearch: 'Tools laden', Monitor: 'Wachten',
+    exec: 'Terminal', js: 'Script', apply_patch: 'Bewerken', spawn_agent: 'Subagent', update_plan: 'Plan',
     NotebookEdit: 'Notebook', Artifact: 'Artifact', SendUserFile: 'Bestand sturen', Workflow: 'Workflow',
   };
 
@@ -174,6 +175,9 @@
     const m = tool.match(/^mcp__[^_]+(?:_[^_]+)*?__(.+)$/);
     return m ? m[1].replace(/_/g, ' ') : tool;
   }
+
+  // The AI tool a session runs in: Claude, Codex, …
+  function appOf(s) { return (s && s.toolName) || 'Claude'; }
 
   function shortPath(s) {
     return String(s || '').replace(/\/Users\/[^/\s]+/g, '~');
@@ -238,7 +242,7 @@
 
   function openButton(s, primary) {
     if (s.openUrl) {
-      return `<a class="btn ${primary ? 'primary' : ''}" href="${esc(s.openUrl)}" data-act="open" data-sid="${esc(s.id)}">${ICON_OPEN}Open in Claude</a>`;
+      return `<a class="btn ${primary ? 'primary' : ''}" href="${esc(s.openUrl)}" data-act="open" data-sid="${esc(s.id)}">${ICON_OPEN}Open in ${esc(appOf(s))}</a>`;
     }
     if (s.resumeCmd) {
       return `<button type="button" class="btn ${primary ? 'primary' : ''}" data-act="copy" data-text="${esc(s.resumeCmd)}" title="${esc(s.resumeCmd)}">${ICON_COPY}Kopieer resume-commando</button>`;
@@ -323,7 +327,7 @@
     } else if (s.status === 'error' && s.error) {
       lines.push(`<div class="say claude"><span class="who">Fout</span><span class="body">${esc(s.error.text)}</span></div>`);
     } else if (s.recap || s.last) {
-      lines.push(`<div class="say claude"><span class="who">Claude</span><span class="body">${esc(plain(s.recap || s.last.text))}</span></div>`);
+      lines.push(`<div class="say claude"><span class="who">${esc(appOf(s))}</span><span class="body">${esc(plain(s.recap || s.last.text))}</span></div>`);
     }
 
     const long = ((s.prompt && s.prompt.text) || '').length > 160 || ((s.recap || (s.last && s.last.text) || '').length > 200);
@@ -332,7 +336,7 @@
       html: `
       <article class="card flow ${isOpen ? 'open' : ''}" data-key="${esc(key)}">
         <div class="meta">
-          <span class="pill ${st.cls}${s.unread ? ' unread' : ''}"${s.unread ? ' title="Nog niet bekeken in Claude"' : ''}><span class="dot"></span>${esc(st.label)}</span>
+          <span class="pill ${st.cls}${s.unread ? ' unread' : ''}"${s.unread ? ` title="Nog niet bekeken in ${esc(appOf(s))}"` : ''}><span class="dot"></span>${esc(st.label)}</span>
           <span class="chip-app">${esc(s.app)}</span>
           ${statusTime(s)}
         </div>
@@ -425,9 +429,12 @@
     interrupted: 'attention', error: 'error', done: 'done', idle: 'done', ended: 'done',
   };
 
+  // Each mini row names its AI tool (Claude, Codex) when that setting is on.
+  let miniTools = false;
+
   function miniRow(s, withQuestion) {
     const key = 'm:' + s.id;
-    const cls = (MINI_CLASS[s.status] || 'done') + (s.unread ? ' unread' : '');
+    const cls = (MINI_CLASS[s.status] || 'done') + (s.unread ? ' unread' : '') + (miniTools ? ' has-tool' : '');
     const st = STATUS[s.status] || STATUS.idle;
     let sub = '';
     if (withQuestion && s.question) {
@@ -437,10 +444,11 @@
         : q.text.split('\n')[0];
     }
     const when = (s.question && s.question.ts) || (s.status === 'working' ? s.since : s.lastTs);
-    const tip = [s.title, s.project, s.unread ? 'nog niet bekeken' : st.label, s.question && s.question.text].filter(Boolean).join(' · ');
+    const tip = [s.title, s.project, s.app, s.unread ? 'nog niet bekeken' : st.label, s.question && s.question.text].filter(Boolean).join(' · ');
     const inner = `
       <span class="mdot"></span>
       <span class="mmain"><span class="mtitle">${esc(s.title)}</span>${sub ? `<span class="msub">${esc(sub)}</span>` : ''}</span>
+      ${miniTools ? `<span class="mtool">${esc(appOf(s))}</span>` : ''}
       ${timeEl(when, 'compact')}`;
     const html = s.openUrl
       ? `<a class="mrow ${cls}" data-key="${esc(key)}" href="${esc(s.openUrl)}" data-act="open" data-sid="${esc(s.id)}" title="${esc(tip)}">${inner}</a>`
@@ -449,6 +457,7 @@
   }
 
   function renderMini(sessions, questions) {
+    miniTools = !!(state && state.toolLabels);
     const working = sessions.filter((s) => s.status === 'working').length;
     const qIds = new Set(questions.map((s) => s.id));
     const flows = sessions.filter((s) => !qIds.has(s.id));
@@ -559,7 +568,7 @@
     const notice = $('#notice');
     if (!state.hooksSeen) {
       setHidden(notice, false);
-      if (!notice.innerHTML) notice.innerHTML = 'De live-triggers (hooks) hebben nog niets gemeld. Tot de eerste melding schat het dashboard de status uit de transcripts. Installeer ze met <code>node install-hooks.js</code> in de map <code>ai-flows</code>.';
+      if (!notice.innerHTML) notice.innerHTML = 'Nog geen hooks gezien, dus de status is een schatting. Installeer ze met <code>node install-hooks.js</code>.';
     } else {
       setHidden(notice, true);
     }
@@ -601,19 +610,30 @@
   // ---------------------------------------------------------------- actions
 
   let toastTimer = null;
+  const ICON_CLOSE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
+  function hideToast() { clearTimeout(toastTimer); $('#toast').classList.remove('show'); }
   // action: { label, run } adds a button, such as "Ongedaan maken".
   function toast(text, action) {
     const t = $('#toast');
-    t.replaceChildren(document.createTextNode(text));
+    const msg = document.createElement('span');
+    msg.className = 'toast-msg';
+    msg.textContent = text;
     if (action) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'toast-act';
       b.textContent = action.label;
-      b.addEventListener('click', () => { t.classList.remove('show'); action.run(); }, { once: true });
-      t.append(b);
+      b.addEventListener('click', () => { hideToast(); action.run(); }, { once: true });
+      msg.append(' ', b);
     }
-    t.classList.toggle('has-action', !!action);
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'toast-close';
+    close.setAttribute('aria-label', 'Sluiten');
+    close.title = 'Sluiten';
+    close.innerHTML = ICON_CLOSE;
+    close.addEventListener('click', hideToast, { once: true });
+    t.replaceChildren(msg, close);
     t.classList.add('show');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => t.classList.remove('show'), action ? 7000 : 3200);
@@ -649,8 +669,8 @@
   }
 
   // How a session opens follows the setting (see OPEN_VIA in server.js):
-  // 'server' (default) asks nothing but leaves Claude behind your window;
-  // 'browser' lets your browser or app open the link, which brings Claude
+  // 'server' (default) asks nothing but leaves the app behind your window;
+  // 'browser' lets your browser or app open the link, which brings the app
   // forward with the focus (since macOS 14 only the app you click in may do
   // that) but may ask for permission. If the server cannot, the link is used.
   async function openSession(s) {
@@ -672,6 +692,7 @@
   function syncSettings() {
     const via = (state && state.openVia) || 'server';
     for (const r of settingsPanel.querySelectorAll('input[name="open-via"]')) r.checked = r.value === via;
+    settingsPanel.querySelector('input[name="tool-labels"]').checked = !!(state && state.toolLabels);
   }
 
   function toggleSettings(open) {
@@ -679,14 +700,25 @@
     settingsButton.setAttribute('aria-expanded', String(open));
     if (!open) return;
     syncSettings();
-    const r = settingsButton.getBoundingClientRect();
-    settingsPanel.style.top = `${r.bottom + 8}px`;
-    settingsPanel.style.right = `${Math.max(16, innerWidth - r.right)}px`;
+    if (document.body.classList.contains('is-mini')) {
+      // The mini view has no room for a pop-over: the panel fills the window
+      // (see app.css), with its own title and close button.
+      settingsPanel.style.top = settingsPanel.style.right = settingsPanel.style.maxHeight = '';
+    } else {
+      const r = settingsButton.getBoundingClientRect();
+      // clientWidth leaves out a classic scrollbar, as fixed positioning does.
+      const vw = document.documentElement.clientWidth;
+      settingsPanel.style.top = `${r.bottom + 8}px`;
+      settingsPanel.style.right = `${Math.max(16, vw - r.right)}px`;
+      // A low window: scroll inside the panel instead of past the edge.
+      settingsPanel.style.maxHeight = `${Math.max(160, innerHeight - r.bottom - 16)}px`;
+    }
     const checked = settingsPanel.querySelector('input:checked') || settingsPanel.querySelector('input');
     if (checked) checked.focus();
   }
 
   settingsButton.addEventListener('click', () => toggleSettings(settingsPanel.hidden));
+  $('#settings-close').addEventListener('click', () => { toggleSettings(false); settingsButton.focus(); });
   document.addEventListener('pointerdown', (e) => {
     if (!settingsPanel.hidden && !e.target.closest('#settings-panel, #settings-button')) toggleSettings(false);
   });
@@ -696,29 +728,35 @@
   window.addEventListener('resize', () => { if (!settingsPanel.hidden) toggleSettings(true); });
 
   settingsPanel.addEventListener('change', async (e) => {
-    if (e.target.name !== 'open-via') return;
-    const openVia = e.target.value;
+    const change = e.target.name === 'open-via' ? { openVia: e.target.value }
+      : e.target.name === 'tool-labels' ? { toolLabels: e.target.checked } : null;
+    if (!change) return;
     try {
       const r = await fetch('/api/settings', {
         method: 'POST',
         headers: apiHeaders({ 'X-AI-Flows': '1', 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ openVia }),
+        body: JSON.stringify(change),
       });
       if (r.status === 401) { showLocked(); return; }
       const d = await r.json();
-      if (state) state.openVia = d.openVia;
+      if (state) { state.openVia = d.openVia; state.toolLabels = d.toolLabels; }
       syncSettings();
-      toast(d.openVia === 'browser' ? 'Sessies openen voortaan via je browser.' : 'Sessies openen voortaan zonder vraag.');
+      if ('toolLabels' in change) {
+        render();
+        toast(d.toolLabels ? 'AI-tool zichtbaar.' : 'AI-tool verborgen.');
+        return;
+      }
+      toast(d.openVia === 'browser' ? 'Opent via je browser.' : 'Opent zonder vraag.');
     } catch {
       syncSettings();
-      toast('Kon de instelling niet opslaan: is de server bereikbaar?');
+      toast('Opslaan mislukt.');
     }
   });
 
   // ---------------------------------------------------------------- right-click menu
 
   // Right-click a flow (card, question or mini row) to open it, mark it read or
-  // unread, or close it. "Unread" lasts until you open the session in Claude;
+  // unread, or close it. "Unread" lasts until you open the session in its app;
   // "closed" until you send it a new message or it asks something new.
   const ctx = document.getElementById('ctx');
   let ctxSid = null;
@@ -731,7 +769,9 @@
 
   function openCtx(x, y, s) {
     ctxSid = s.id;
-    ctx.querySelector('[data-ctx="open"]').hidden = !s.openUrl;
+    const open = ctx.querySelector('[data-ctx="open"]');
+    open.hidden = !s.openUrl;
+    setText(open, `Open in ${appOf(s)}`);
     setText(ctx.querySelector('[data-ctx="mark"]'), needsReading(s) ? 'Markeer als gelezen' : 'Markeer als ongelezen');
     ctx.hidden = false;
     const r = ctx.getBoundingClientRect();
@@ -754,10 +794,10 @@
       if (kind === 'closed') {
         if (state) state.sessions = (state.sessions || []).filter((x) => x.id !== s.id);
         render();
-        toast(`“${s.title}” is gesloten tot er iets nieuws is.`, { label: 'Ongedaan maken', run: () => markSession(s, 'open') });
+        toast(`“${s.title}” gesloten.`, { label: 'Ongedaan maken', run: () => markSession(s, 'open') });
         return;
       }
-      if (kind === 'open') { toast('De sessie staat er weer.'); return; }
+      if (kind === 'open') { toast('Teruggezet.'); return; }
       const unread = kind === 'unread';
       if (!unread && (s.status === 'question' || s.status === 'permission')) { s.status = 'done'; s.question = null; }
       s.unread = unread && !['working', 'permission', 'question'].includes(s.status);
@@ -813,14 +853,14 @@
       const text = cleanAnswer(el.dataset.text);
       await copy(text);
       if (s && s.openUrl) {
-        toast(`“${text}” staat op je klembord. Plak het in de sessie met ⌘V.`);
+        toast(`“${text}” gekopieerd. Plak met ⌘V.`);
         openSession(s);
       } else {
-        toast(`“${text}” staat op je klembord.`);
+        toast(`“${text}” gekopieerd.`);
       }
     } else if (act === 'copy') {
       await copy(String(el.dataset.text).replace(INVISIBLE, ''));
-      toast('Gekopieerd. Plak het in je terminal.');
+      toast('Gekopieerd. Plak in je terminal.');
     } else if (act === 'fold') {
       toggleFolder(el.dataset.fold);
     } else if (act === 'toggle') {
@@ -865,7 +905,7 @@
     bell.setAttribute('aria-pressed', String(on));
     bell.disabled = !available;
     setTitle(bell, available
-      ? (on ? 'Mac-meldingen bij een nieuwe vraag staan aan' : 'Zet Mac-meldingen bij een nieuwe vraag aan')
+      ? (on ? 'Meldingen staan aan' : 'Meldingen aanzetten')
       : 'Bouw eerst het meldingsappje: notifier/build.sh');
     setText($('#bell-text'), on ? 'Meldingen aan' : 'Meldingen uit');
   }
@@ -881,33 +921,71 @@
       const d = await r.json();
       state.notify = d.notify;
       syncBell();
-      toast(d.notify ? 'Mac-meldingen staan aan. Je krijgt er nu een als test.' : 'Mac-meldingen staan uit.');
+      toast(d.notify ? 'Meldingen aan.' : 'Meldingen uit.');
     } catch {
-      toast('Kon de instelling niet opslaan: is de server bereikbaar?');
+      toast('Opslaan mislukt.');
     }
   });
 
-  // mini mode: ?mini, or automatically in a window narrower than 360 px
+  // mini mode: ?mini, or automatically in a window narrower than 600 px. The
+  // header's controls move into the mini bar, so they work the same in both.
+  //
+  // "Volledig dashboard openen" in a narrow window shows the full view for now:
+  // kept across reloads of this tab, dropped again as soon as the window
+  // crosses 600 px either way, or with the mini button in the header. (It used
+  // to load ?full, which locked the page in the full view.) ?full itself still
+  // shows the full view, for that one load.
   const params = new URLSearchParams(location.search);
-  const narrowQuery = matchMedia('(max-width: 359px)');
-  function applyMode() {
-    const mini = params.has('mini') || (!params.has('full') && narrowQuery.matches);
-    document.body.classList.toggle('is-mini', mini);
+  const narrowQuery = matchMedia('(max-width: 599px)');
+  const controls = $('.top .controls');
+  const controlsHome = controls.parentNode;
+  const openMini = $('#open-mini');
+  const session = {
+    get() { try { return sessionStorage.getItem('ai-flows:full') === '1'; } catch { return false; } },
+    set(on) { try { if (on) sessionStorage.setItem('ai-flows:full', '1'); else sessionStorage.removeItem('ai-flows:full'); } catch {} },
+  };
+  let showFull = params.has('full') || session.get();
+  if (params.has('full')) {
+    params.delete('full');
+    const q = params.toString();
+    history.replaceState(null, '', location.pathname + (q ? '?' + q : '') + location.hash);
   }
-  narrowQuery.addEventListener('change', applyMode);
+  function setShowFull(on) { showFull = on; session.set(on); }
+
+  function applyMode() {
+    const mini = params.has('mini') || (!showFull && narrowQuery.matches);
+    document.body.classList.toggle('is-mini', mini);
+    // Mini because the window is narrow: widening it is the way to the full
+    // view, so no button for it (the pop-up and ?mini keep theirs).
+    document.body.classList.toggle('auto-mini', mini && !params.has('mini'));
+    const home = mini ? $('#mini-bar') : controlsHome;
+    if (controls.parentNode !== home) {
+      if (!settingsPanel.hidden) toggleSettings(false);
+      home.appendChild(controls);
+    }
+    // Full view in a narrow window: the mini button switches back in place.
+    const back = !mini && narrowQuery.matches;
+    openMini.title = back ? 'Terug naar de mini-weergave' : 'Mini-venster openen';
+    openMini.setAttribute('aria-label', back ? 'Terug naar de mini-weergave' : 'Mini-venster');
+  }
+  narrowQuery.addEventListener('change', () => { setShowFull(false); applyMode(); });
 
   function openFull() {
     // From the pop-up window, show the full dashboard in a normal tab.
     if (window.opener && !window.opener.closed) { window.opener.focus(); return; }
     if (params.has('mini') && window.name === 'ai-flows-mini') { window.open('/', 'ai-flows-full'); return; }
-    location.href = narrowQuery.matches ? '/?full' : '/';
+    setShowFull(true);
+    if (params.has('mini')) { location.href = '/'; return; }
+    applyMode();
+    scrollTo(0, 0);
   }
   $('#mini-expand').addEventListener('click', openFull);
-  $('.mini-micro').addEventListener('click', openFull);
+  $('.mini-micro').addEventListener('click', () => { if (params.has('mini')) openFull(); });
 
-  $('#open-mini').addEventListener('click', () => {
+  openMini.addEventListener('click', () => {
+    if (narrowQuery.matches && !params.has('mini')) { setShowFull(false); applyMode(); scrollTo(0, 0); return; }
     const w = window.open('/?mini', 'ai-flows-mini', 'popup=yes,width=320,height=460');
-    if (!w) toast('Je browser blokkeerde het venster. Open anders 127.0.0.1:4777/?mini.');
+    if (!w) toast('Venster geblokkeerd. Open 127.0.0.1:4777/?mini.');
   });
 
   // ---------------------------------------------------------------- data

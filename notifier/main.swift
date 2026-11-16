@@ -49,11 +49,12 @@ func readPayload(_ path: String) -> [String: String]? {
     return object.compactMapValues { $0 as? String }
 }
 
-// A click only ever opens a Claude session or the dashboard on 127.0.0.1,
-// whatever URL the payload holds.
+// A click only ever opens a Claude session, a Codex thread or the dashboard on
+// 127.0.0.1, whatever URL the payload holds.
 func isAllowed(_ url: URL) -> Bool {
     switch url.scheme?.lowercased() {
     case "claude": return url.host?.lowercased() == "code"
+    case "codex": return url.host?.lowercased() == "threads"
     case "http": return url.host == "127.0.0.1"
     default: return false
     }
@@ -113,7 +114,7 @@ final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
         }
         // Since macOS 14 an app only comes to the front when the active app
         // hands over. The click made us the active app, so hand over to the
-        // app that opens the link (Claude, or the browser for the dashboard)
+        // app that opens the link (Claude, Codex, or the browser for the dashboard)
         // and ask for it to be activated, so your keyboard lands there.
         let target = NSWorkspace.shared.urlForApplication(toOpen: url)
         if #available(macOS 14.0, *), let target, let id = Bundle(url: target)?.bundleIdentifier {

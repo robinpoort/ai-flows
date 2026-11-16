@@ -126,7 +126,7 @@ function askFromTool(tool, input) {
     const qs = Array.isArray(input && input.questions) ? input.questions : [];
     return {
       kind: 'ask',
-      text: qs.map((q) => q.question).filter(Boolean).join('\n') || 'Claude stelt je een vraag',
+      text: qs.map((q) => q.question).filter(Boolean).join('\n') || 'Er is een vraag voor je',
       options: qs.length === 1 && Array.isArray(qs[0].options) ? qs[0].options.map((o) => o.label).filter(Boolean) : [],
       parts: qs.map((q) => ({
         header: q.header || null,
@@ -174,7 +174,9 @@ const logFiles = new Map(); // file -> { offset, rest }
 const eventSessions = new Map(); // sid -> { events: [], tp, cwd, ep }
 
 function ingest(e) {
-  if (!e || !e.sid || !e.ts) return;
+  if (!e || !e.ts) return;
+  if (e.src === 'codex') { ingestCodex(e); return; }
+  if (!e.sid) return;
   let s = eventSessions.get(e.sid);
   if (!s) eventSessions.set(e.sid, (s = { events: [], tp: null, cwd: null, ep: null }));
   if (e.tp) s.tp = e.tp;
@@ -572,6 +574,373 @@ function checkFront() {
   });
 }
 
+// ---------------------------------------------------------------- Codex
+//
+// OpenAI's Codex, the desktop app and the CLI, keeps its conversations
+// ("threads") in ~/.codex: a list in an SQLite database, and one rollout file
+// per thread with everything that happened in it. Both are only ever read.
+// Codex's hooks add the one thing those files miss, that Codex waits for your
+// permission: install-hooks.js adds ours to ~/.codex/hooks.json, and Codex
+// runs them once you trust them there (Settings > Hooks).
+//
+// Another tool fits in the same way: find its conversations, read one into a
+// status, and return a session in the shape buildSession returns, with its own
+// `tool` and `toolName`.
+
+const CODEX_HOME = process.env.AI_FLOWS_CODEX_HOME || path.join(HOME, '.codex');
+const CODEX_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CODEX_ROLLOUT_DIRS = ['sessions', 'archived_sessions'].map((d) => path.join(CODEX_HOME, d) + path.sep);
+const codexEvents = new Map(); // thread id -> [hook events]
+let codexThreads = new Map(); // thread id -> { id, rollout, cwd, title, name, source, originator, archived, updatedAt }
+let codexScanAt = 0;
+let codexBusy = false;
+
+function ingestCodex(e) {
+  const fromFile = typeof e.tp === 'string' && e.tp.match(/([0-9a-f]{8}-[0-9a-f-]{27})\.jsonl$/i);
+  const id = CODEX_ID.test(e.sid || '') ? e.sid : fromFile ? fromFile[1] : null;
+  if (!id) return;
+  let list = codexEvents.get(id);
+  if (!list) codexEvents.set(id, (list = []));
+  let i = list.length;
+  while (i > 0 && list[i - 1].ts > e.ts) i--;
+  list.splice(i, 0, e);
+  if (list.length > 200) list.splice(0, list.length - 200);
+}
+
+const inCodex = (p) => typeof p === 'string' && p.endsWith('.jsonl') &&
+  CODEX_ROLLOUT_DIRS.some((d) => path.resolve(p).startsWith(d));
+
+// The newest state database (its number goes up with Codex versions).
+function codexDatabase() {
+  let names = [];
+  try { names = fs.readdirSync(CODEX_HOME); } catch { return null; }
+  const dbs = names.map((n) => n.match(/^state_(\d+)\.sqlite$/)).filter(Boolean).sort((a, b) => b[1] - a[1]);
+  return dbs.length ? path.join(CODEX_HOME, dbs[0][0]) : null;
+}
+
+// Subagents (source is a JSON object) belong to the thread that started them.
+const CODEX_QUERIES = [
+  (since) => `select id, rollout_path as rollout, cwd, title, name, source, originator, archived,
+    coalesce(updated_at_ms, updated_at * 1000) as updatedAt from threads
+    where coalesce(updated_at_ms, updated_at * 1000) > ${since} and source not like '{%'
+    order by updatedAt desc limit 100`,
+  // Databases from older Codex versions lack some of those columns.
+  (since) => `select id, rollout_path as rollout, cwd, title, source, archived, updated_at * 1000 as updatedAt
+    from threads where updated_at * 1000 > ${since} and source not like '{%' order by updated_at desc limit 100`,
+];
+
+function scanCodex() {
+  const now = Date.now();
+  if (codexBusy || now - codexScanAt < 4000) return;
+  codexScanAt = now;
+  const db = codexDatabase();
+  if (!db) { codexThreads = scanCodexFiles(now); return; }
+  codexBusy = true;
+  const since = Math.floor(now - KEEP_MS);
+  const finish = (rows) => {
+    codexBusy = false;
+    codexThreads = rows
+      ? new Map(rows.filter((r) => r && CODEX_ID.test(r.id)).map((r) => [r.id, r]))
+      : scanCodexFiles(Date.now());
+  };
+  const attempt = (i) => {
+    if (i >= CODEX_QUERIES.length) return finish(null);
+    execFile('/usr/bin/sqlite3', ['-readonly', '-json', db, CODEX_QUERIES[i](since)],
+      { timeout: 4000, maxBuffer: 4 * 1024 * 1024 }, (err, out) => {
+        if (err) { if (i === CODEX_QUERIES.length - 1) logOnce('codex database', err); return attempt(i + 1); }
+        try { finish(out.trim() ? JSON.parse(out) : []); } catch (e) { logOnce('codex database', e); attempt(i + 1); }
+      });
+  };
+  attempt(0);
+}
+
+// Without the database (no sqlite3, or a layout we do not know): the rollout
+// files changed lately, named rollout-<date>-<thread id>.jsonl.
+function scanCodexFiles(now) {
+  const out = new Map();
+  const walk = (dir, depth) => {
+    let names = [];
+    try { names = fs.readdirSync(dir); } catch { return; }
+    for (const n of names) {
+      const fp = path.join(dir, n);
+      if (depth < 3 && /^\d+$/.test(n)) { walk(fp, depth + 1); continue; }
+      const m = n.match(/^rollout-.*-([0-9a-f]{8}-[0-9a-f-]{27})\.jsonl$/i);
+      if (!m || !CODEX_ID.test(m[1])) continue;
+      const st = safeStat(fp);
+      if (!st || !st.isFile() || now - st.mtimeMs > KEEP_MS) continue;
+      const meta = codexMeta(fp, st.mtimeMs);
+      // Subagents (source is an object) belong to the thread that started them.
+      if (!meta || (meta.source && typeof meta.source === 'object') || /^\s*\{/.test(meta.source || '')) continue;
+      out.set(m[1], {
+        id: m[1], rollout: fp, cwd: typeof meta.cwd === 'string' ? meta.cwd : null, title: null, archived: 0,
+        source: typeof meta.source === 'string' ? meta.source : null,
+        originator: typeof meta.originator === 'string' ? meta.originator : null, updatedAt: st.mtimeMs,
+      });
+    }
+  };
+  walk(path.join(CODEX_HOME, 'sessions'), 0);
+  return out;
+}
+
+// The first line of a rollout says where and how the thread started.
+const codexMetaCache = new Map(); // file -> { mtimeMs, meta }
+function codexMeta(file, mtimeMs) {
+  const c = codexMetaCache.get(file);
+  if (c) return c.meta;
+  let meta = {};
+  try {
+    const buf = Buffer.alloc(128 * 1024);
+    const fd = fs.openSync(file, 'r');
+    let n = 0;
+    try { n = fs.readSync(fd, buf, 0, buf.length, 0); } finally { fs.closeSync(fd); }
+    const text = buf.toString('utf8', 0, n);
+    const end = text.indexOf('\n');
+    const first = JSON.parse(end >= 0 ? text.slice(0, end) : text);
+    if (first && first.type === 'session_meta' && first.payload && typeof first.payload === 'object') meta = first.payload;
+  } catch {}
+  codexMetaCache.set(file, { mtimeMs, meta });
+  if (codexMetaCache.size > 500) codexMetaCache.delete(codexMetaCache.keys().next().value);
+  return meta;
+}
+
+function codexText(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.map((c) => (c && typeof c.text === 'string' ? c.text : '')).filter(Boolean).join('\n');
+}
+
+// The app puts attached files above your words, which follow "## My request:".
+function codexPrompt(text) {
+  const t = String(text || '').slice(0, MAX_TEXT * 4);
+  const m = t.match(/^##\s*My request(?: for Codex)?:[ \t]*$/m);
+  return cleanPrompt(m ? t.slice(m.index + m[0].length) : t);
+}
+
+function codexCommand(cmd) {
+  if (Array.isArray(cmd)) cmd = cmd.length >= 3 && /^-l?c$/.test(cmd[1]) ? cmd[2] : cmd.join(' ');
+  return clip(String(cmd || '').slice(0, 1000).replace(/\s+/g, ' ').trim(), 160);
+}
+
+function parseArgs(a) {
+  if (typeof a !== 'string') return a;
+  try { return JSON.parse(a); } catch { return a; }
+}
+
+// What a finished step did, from an item_completed event.
+function codexActivity(it) {
+  switch (it.type) {
+    case 'CommandExecution': return { tool: 'Bash', sum: codexCommand(it.command) };
+    case 'FileChange': {
+      const files = it.changes && typeof it.changes === 'object' ? Object.keys(it.changes) : [];
+      return { tool: 'Edit', sum: files.length > 1 ? `${files[0]} (+${files.length - 1})` : files[0] || '' };
+    }
+    case 'McpToolCall': {
+      const a = parseArgs(it.arguments) || {};
+      const sum = typeof a === 'object' ? a.title || a.description || a.query || a.url || a.path || '' : '';
+      return { tool: `mcp__${it.server || 'mcp'}__${it.tool || 'tool'}`, sum: clip(String(sum), 160) };
+    }
+    case 'Extension':
+    case 'WebSearch':
+      return { tool: it.kind === 'web.search' || it.type === 'WebSearch' ? 'WebSearch' : String(it.kind || 'Extension'), sum: clip(String(it.query || ''), 160) };
+    case 'ImageView': return { tool: 'Read', sum: String(it.path || '').replace(/^file:\/\//, '') };
+    default: return null;
+  }
+}
+
+// What a step that just started does, from its tool call.
+function codexCallSummary(args) {
+  const a = parseArgs(args);
+  if (a && typeof a === 'object') {
+    const v = a.title || a.description || (a.cmd && codexCommand(a.cmd)) || (a.command && codexCommand(a.command)) || a.path || a.query || a.url || '';
+    return clip(String(v).replace(/\s+/g, ' '), 160);
+  }
+  const text = String(a || '').slice(0, 2000);
+  const cmd = text.match(/cmd:\s*"((?:[^"\\]|\\.){1,400})/);
+  return clip((cmd ? cmd[1].replace(/\\"/g, '"') : text.split('\n')[0]).replace(/\s+/g, ' ').trim(), 160);
+}
+
+function deriveFromCodex(tail) {
+  if (tail.derived) return tail.derived;
+  const st = {
+    status: 'idle', since: null, lastTs: 0, prompt: null, activity: null, ask: null, last: null,
+    error: null, model: null, cwd: null, turnStart: null, progressTs: 0,
+  };
+  const set = (status, ts) => { if (st.status !== status) { st.status = status; st.since = ts; } };
+  let lastMsg = null;
+  for (const e of tail.entries) {
+    const p = e && e.payload;
+    if (!p || typeof p !== 'object') continue;
+    const ts = (e.timestamp && Date.parse(e.timestamp)) || 0;
+    if (ts) st.lastTs = Math.max(st.lastTs, ts);
+    if (e.type === 'session_meta' || e.type === 'turn_context') {
+      if (typeof p.cwd === 'string') st.cwd = p.cwd;
+      if (typeof p.model === 'string') st.model = p.model;
+    } else if (e.type === 'event_msg') {
+      switch (p.type) {
+        case 'task_started':
+          st.turnStart = ts;
+          st.progressTs = ts;
+          st.ask = st.error = st.activity = null;
+          lastMsg = null;
+          set('working', ts);
+          break;
+        case 'user_message': // older Codex versions
+          if (typeof p.message === 'string' && p.message.trim()) st.prompt = { text: codexPrompt(p.message), ts };
+          break;
+        case 'agent_message':
+          if (typeof p.message === 'string') lastMsg = p.message;
+          break;
+        case 'item_completed': {
+          const it = p.item || {};
+          st.progressTs = ts;
+          if (it.type === 'UserMessage') {
+            const text = codexPrompt(codexText(it.content));
+            if (text) st.prompt = { text, ts };
+          } else if (it.type === 'AgentMessage') {
+            const text = codexText(it.content);
+            if (text) lastMsg = text;
+          } else {
+            const a = codexActivity(it);
+            if (a) st.activity = { ...a, ts };
+          }
+          break;
+        }
+        case 'task_complete': {
+          st.progressTs = ts;
+          const text = typeof p.last_agent_message === 'string' && p.last_agent_message ? p.last_agent_message : lastMsg;
+          if (text) st.last = { text, ts };
+          st.activity = null;
+          if (st.ask && st.ask.tuid) { set('question', ts); break; }
+          const q = questionFromTurn(null, text);
+          if (q) { st.ask = { ...q, ts }; set('question', ts); } else { st.ask = null; set('done', ts); }
+          break;
+        }
+        case 'turn_aborted':
+          st.progressTs = ts;
+          st.activity = null;
+          st.ask = null;
+          set('interrupted', ts);
+          break;
+        case 'error':
+          st.error = { text: clip(String(p.message || 'Onbekende fout'), 300), ts };
+          set('error', ts);
+          break;
+      }
+    } else if (e.type === 'response_item') {
+      if (p.type === 'function_call' || p.type === 'custom_tool_call') {
+        st.progressTs = ts;
+        if (p.name === 'request_user_input') {
+          const a = parseArgs(p.arguments ?? p.input);
+          st.ask = { ...askFromTool('AskUserQuestion', a && typeof a === 'object' ? a : {}), tuid: p.call_id, ts };
+          set('question', ts);
+        } else if (p.name !== 'wait') {
+          st.activity = { tool: String(p.name || 'tool'), sum: codexCallSummary(p.arguments ?? p.input), ts };
+          if (st.status !== 'question') set('working', ts);
+        }
+      } else if (p.type === 'function_call_output' || p.type === 'custom_tool_call_output') {
+        st.progressTs = ts;
+        if (st.ask && st.ask.tuid && st.ask.tuid === p.call_id) {
+          st.ask = null;
+          if (st.status === 'question') set('working', ts);
+        }
+      }
+    }
+  }
+  if (!st.last && lastMsg && st.status !== 'working') st.last = { text: lastMsg, ts: st.lastTs };
+  tail.derived = st;
+  return st;
+}
+
+// A permission prompt from Codex's hooks is open until something shows it was
+// answered: a later hook, or the thread moving on in its rollout file.
+const CODEX_ANSWERED = new Set(['PostToolUse', 'Stop', 'Interrupt', 'UserPromptSubmit', 'SessionStart', 'SessionEnd']);
+function codexPermission(id, progressTs) {
+  let perm = null;
+  for (const e of codexEvents.get(id) || []) {
+    if (e.ev === 'PermissionRequest') perm = { tool: e.tool || null, sum: e.sum || '', ts: e.ts };
+    else if (perm && e.ts >= perm.ts && CODEX_ANSWERED.has(e.ev)) perm = null;
+  }
+  if (perm && (progressTs > perm.ts || Date.now() - perm.ts > KEEP_MS)) perm = null;
+  return perm;
+}
+
+function buildCodexSession(t) {
+  const sid = 'codex-' + t.id;
+  const tail = inCodex(t.rollout) ? readTail(t.rollout) : null;
+  const st = tail ? deriveFromCodex(tail) : null;
+  // Older rollouts are compressed (.zst): the database still knows the thread.
+  const lastTs = Math.max((st && st.lastTs) || 0, 0) || Number(t.updatedAt) || 0;
+  let status = st ? st.status : 'done';
+  if (status === 'idle') status = 'done';
+  let since = (st && st.since) || lastTs;
+  if (status === 'working' && st.turnStart) since = st.turnStart;
+  if (status === 'working' && Date.now() - lastTs > STALE_MS) status = 'stale';
+
+  let question = null;
+  const perm = codexPermission(t.id, (st && st.progressTs) || 0);
+  if (perm) {
+    status = 'permission';
+    question = {
+      kind: 'permission', text: perm.tool ? `Mag Codex ${perm.tool} gebruiken?` : 'Codex vraagt toestemming',
+      tool: perm.tool, detail: perm.tool ? perm.sum : null, options: [], context: null, ts: perm.ts,
+    };
+  } else if (status === 'question' && st.ask) {
+    question = {
+      kind: st.ask.kind, text: st.ask.text, options: st.ask.options || [], parts: st.ask.parts || null,
+      context: st.ask.context || null, ts: st.ask.ts || since,
+    };
+  }
+
+  const mark = marks.get(sid) || {};
+  let unread = !!(mark.unread && mark.unread > (mark.read || 0)) && !['working', 'permission', 'question'].includes(status);
+  if (question && mark.read && mark.read >= (question.ts || since || 0)) {
+    question = null;
+    status = 'done';
+    unread = false;
+  }
+  const freshAt = Math.max((st && st.prompt && st.prompt.ts) || 0, (question && question.ts) || 0);
+  const closed = !!mark.closed && freshAt <= mark.closed;
+
+  const cwd = (typeof t.cwd === 'string' && t.cwd) || (st && st.cwd) || null;
+  const project = projectFromCwd(cwd);
+  const promptText = st && st.prompt && st.prompt.text;
+  const named = (typeof t.name === 'string' && t.name.trim()) || codexPrompt(t.title || '').split('\n')[0];
+  const title = named || (promptText ? clip(promptText.split('\n')[0], 70) : null) || project.name;
+  const cli = t.source === 'cli' || t.source === 'exec' || /tui|cli|exec/i.test(t.originator || '');
+
+  return {
+    id: sid,
+    tool: 'codex',
+    toolName: 'Codex',
+    localId: null,
+    openUrl: cli ? null : `codex://threads/${t.id}`,
+    resumeCmd: cli && !/[\p{Cc}\p{Cf}]/u.test(cwd || '') ? `cd ${shellQuote(cwd || HOME)} && codex resume ${shellQuote(t.id)}` : null,
+    title: clip(String(title), 200),
+    project: project.name,
+    projectDetail: project.detail,
+    folder: folderOf(null, cwd),
+    cwd,
+    closed,
+    app: cli ? 'Codex CLI' : 'Codex-app',
+    archived: !!Number(t.archived),
+    unread,
+    status,
+    since,
+    lastTs,
+    prompt: st && st.prompt ? { text: clip(st.prompt.text, 600), ts: st.prompt.ts } : null,
+    autoPrompt: null,
+    activity: (st && st.activity) || null,
+    background: false,
+    last: st && st.last ? { text: clip(st.last.text, 1500), ts: st.last.ts } : null,
+    recap: null,
+    question: clipQuestion(question),
+    error: (st && st.error) || null,
+    model: (st && st.model) || null,
+    subagents: [],
+    source: tail ? 'rollout' : 'database',
+  };
+}
+
 // When you last saw each session's answer: the app records when you focused a
 // session; this adds "it finished while you were looking at it".
 const seenAt = new Map(); // sid -> ms
@@ -734,6 +1103,8 @@ function buildSession(sid) {
 
   return {
     id: sid,
+    tool: 'claude',
+    toolName: 'Claude',
     localId: desk ? desk.localId : null,
     openUrl: desk ? `claude://code/continue?session=${encodeURIComponent(desk.localId)}&source=ai-flows` : null,
     // Quoting stops the shell, not the terminal: control characters in a folder
@@ -771,6 +1142,7 @@ function computeState(windowMin) {
   readHookLog();
   scanTranscripts();
   scanDesktop();
+  scanCodex();
   const now = Date.now();
   const windowMs = Math.max(5, Math.min(windowMin, 24 * 60)) * MINUTE;
 
@@ -778,16 +1150,24 @@ function computeState(windowMin) {
     const last = s.events.length ? s.events[s.events.length - 1].ts : 0;
     if (now - last > KEEP_MS) eventSessions.delete(sid);
   }
+  for (const [id, list] of codexEvents) {
+    if (!list.length || now - list[list.length - 1].ts > KEEP_MS) codexEvents.delete(id);
+  }
   for (const f of tailCache.keys()) {
     if (![...transcriptIndex.values()].some((t) => t.file === f) &&
-        ![...eventSessions.values()].some((s) => s.tp === f)) tailCache.delete(f);
+        ![...eventSessions.values()].some((s) => s.tp === f) &&
+        ![...codexThreads.values()].some((t) => t.rollout === f)) tailCache.delete(f);
   }
 
   const ids = new Set([...eventSessions.keys(), ...transcriptIndex.keys()]);
+  const builders = [
+    ...[...ids].map((sid) => [sid, () => buildSession(sid)]),
+    ...[...codexThreads.values()].map((t) => [`codex ${t.id}`, () => buildCodexSession(t)]),
+  ];
   const sessions = [];
-  for (const sid of ids) {
+  for (const [name, build] of builders) {
     let s;
-    try { s = buildSession(sid); } catch (err) { logOnce(`session ${sid}`, err); continue; }
+    try { s = build(); } catch (err) { logOnce(`session ${name}`, err); continue; }
     if (!s) continue;
     const live = s.status === 'working' || s.status === 'permission';
     if (s.archived && !live) continue;
@@ -808,6 +1188,7 @@ function computeState(windowMin) {
     hooksSeen: eventSessions.size > 0,
     notify: settings.notify,
     openVia: settings.openVia,
+    toolLabels: settings.toolLabels,
     notifier: notifierAvailable(),
     sessions,
   };
@@ -909,12 +1290,14 @@ const NOTIFY_DIR = path.join(EVENTS_DIR, 'notify');
 //   'browser' — your browser or app opens the link: Claude comes forward with
 //               the keyboard focus; the browser may ask for permission.
 const OPEN_VIA = ['server', 'browser'];
-const DEFAULT_SETTINGS = { notify: true, openVia: 'server' };
+// toolLabels: each mini row names its AI tool (Claude, Codex). Off by default.
+const DEFAULT_SETTINGS = { notify: true, openVia: 'server', toolLabels: false };
 
 function loadSettings() {
   try {
     const s = { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
     if (!OPEN_VIA.includes(s.openVia)) s.openVia = DEFAULT_SETTINGS.openVia;
+    if (typeof s.toolLabels !== 'boolean') s.toolLabels = DEFAULT_SETTINGS.toolLabels;
     return s;
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -1038,6 +1421,11 @@ async function handleSettings(req, res) {
       settings.openVia = body.openVia;
       saveSettings();
     }
+    if (body && typeof body.toolLabels === 'boolean') {
+      settings.toolLabels = body.toolLabels;
+      saveSettings();
+      pushStreams();
+    }
     if (body && typeof body.notify === 'boolean') {
       settings.notify = body.notify;
       saveSettings();
@@ -1047,7 +1435,7 @@ async function handleSettings(req, res) {
       }
     }
   }
-  sendJson(res, { notify: settings.notify, openVia: settings.openVia, notifier: notifierAvailable() });
+  sendJson(res, { notify: settings.notify, openVia: settings.openVia, toolLabels: settings.toolLabels, notifier: notifierAvailable() });
 }
 
 // One-time code: open.sh writes "<code> <unix time>" to an owner-only file and
@@ -1103,10 +1491,17 @@ async function handleMark(req, res) {
 // stays behind your current window (see OPEN_VIA).
 function openSession(req, res, sid) {
   if (!isAction(req)) { res.writeHead(403); return res.end(); }
-  scanDesktop();
-  const desk = desktopByCli.get(sid);
-  if (!desk || !/^local_[A-Za-z0-9-]{1,64}$/.test(desk.localId || '')) return sendJson(res, { ok: false }, 404);
-  const link = `claude://code/continue?session=${desk.localId}&source=ai-flows`;
+  let link;
+  const codexId = typeof sid === 'string' && sid.startsWith('codex-') ? sid.slice(6) : null;
+  if (codexId) {
+    if (!CODEX_ID.test(codexId) || !codexThreads.has(codexId)) return sendJson(res, { ok: false }, 404);
+    link = `codex://threads/${codexId}`;
+  } else {
+    scanDesktop();
+    const desk = desktopByCli.get(sid);
+    if (!desk || !/^local_[A-Za-z0-9-]{1,64}$/.test(desk.localId || '')) return sendJson(res, { ok: false }, 404);
+    link = `claude://code/continue?session=${desk.localId}&source=ai-flows`;
+  }
   if (process.env.AI_FLOWS_DRY_OPEN) {
     console.log('open (dry run):', link);
     return sendJson(res, { ok: true, dryRun: true, link });

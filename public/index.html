@@ -27,7 +27,7 @@
         <button type="button" role="radio" data-min="480" aria-label="8 uur"><span class="long">8 uur</span><span class="short" aria-hidden="true">8u</span></button>
         <button type="button" role="radio" data-min="1440" aria-label="24 uur"><span class="long">24 uur</span><span class="short" aria-hidden="true">24u</span></button>
       </div>
-      <button type="button" class="bell" id="open-mini" title="Open een klein los venster met alleen de kern">
+      <button type="button" class="bell" id="open-mini" title="Mini-venster openen">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="11.5" y="11.5" width="6" height="5" rx="1.2" fill="currentColor"/></svg>
         <span>Mini-venster</span>
       </button>
@@ -42,17 +42,28 @@
     </div>
   </header>
 
-  <section class="settings-panel" id="settings-panel" role="dialog" aria-labelledby="settings-title" hidden>
+  <section class="settings-panel" id="settings-panel" role="dialog" aria-labelledby="settings-heading" hidden>
+    <!-- Only shown in the mini view, where the panel fills the window. -->
+    <div class="sheet-head">
+      <h2 id="settings-heading">Instellingen</h2>
+      <button type="button" class="sheet-close" id="settings-close" aria-label="Sluiten" title="Sluiten">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      </button>
+    </div>
     <h3 id="settings-title">Sessies openen</h3>
     <label class="choice">
       <input type="radio" name="open-via" value="server">
-      <span><strong>Zonder vraag</strong><small>Claude springt meteen naar de sessie, maar blijft achter je huidige venster.</small></span>
+      <span><strong>Zonder vraag</strong><small>Opent achter je huidige venster.</small></span>
     </label>
     <label class="choice">
       <input type="radio" name="open-via" value="browser">
-      <span><strong>Via je browser</strong><small>Claude komt naar voren, met de focus erop. Je browser of app vraagt misschien om toestemming; in Chrome kun je kiezen voor “Altijd toestaan”.</small></span>
+      <span><strong>Via je browser</strong><small>Opent vooraan. Je browser vraagt soms om toestemming.</small></span>
     </label>
-    <p class="settings-note">Een klik op een melding opent Claude altijd vooraan, zonder vraag.</p>
+    <h3 class="settings-section">Mini-venster</h3>
+    <label class="choice">
+      <input type="checkbox" name="tool-labels">
+      <span><strong>Toon de AI-tool</strong><small>Claude of Codex per sessie.</small></span>
+    </label>
   </section>
 
   <nav class="tabs" aria-label="Weergave">
@@ -68,7 +79,6 @@
         <h2 id="q-title">Vragen voor jou</h2>
         <span class="count big" data-count="questions">0</span>
       </div>
-      <p class="hint">Klik een antwoord: het wordt gekopieerd en de sessie gaat open in Claude. Plak het daar met ⌘V.</p>
       <div class="list" id="question-list"></div>
     </section>
 
@@ -81,7 +91,7 @@
       <div class="empty" id="flow-empty" hidden>
         <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M8 30c5-14 10-14 16 0s11 14 16 0" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
         <strong>Rustig</strong>
-        <span>Geen sessies actief in deze periode. Kies hierboven een langere periode.</span>
+        <span>Geen sessies in deze periode.</span>
       </div>
     </section>
   </main>
@@ -94,6 +104,8 @@
       <button type="button" class="mini-expand" id="mini-expand" title="Volledig dashboard openen" aria-label="Volledig dashboard openen">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
+      <!-- In mini mode the header's controls (period, notifications, settings) move here. -->
+      <div class="mini-bar" id="mini-bar"></div>
     </div>
     <div class="mini-micro" aria-hidden="true">
       <div class="micro q"><strong data-count="questions">0</strong><span>vragen</span></div>
@@ -112,16 +124,14 @@
     <div class="locked-card">
       <svg viewBox="0 0 256 256" aria-hidden="true"><rect width="256" height="256" rx="48" fill="#0042FF"/><rect x="32" y="32" width="160" height="112" rx="16" fill="#5480FF"/><path d="M80 80h128a16 16 0 0 1 16 16v80a16 16 0 0 1-16 16H120l-32 32v-32h-8a16 16 0 0 1-16-16V96a16 16 0 0 1 16-16Z" fill="#FFFFFF"/><path d="M104 136c10-16 30-16 40 0s30 16 40 0" fill="none" stroke="#0042FF" stroke-width="16" stroke-linecap="round"/></svg>
       <h2>Open AI Flows met je eigen link</h2>
-      <p>Dit dashboard laat je prompts en vragen zien. Daarom vraagt het een sleutel die alleen jij op deze Mac kunt lezen.</p>
       <p>Draai in de map <code>ai-flows</code>:</p>
       <pre><code>./open.sh</code></pre>
-      <p>Werk je in een andere app of browser? Draai dan <code>./open.sh --copy</code> en plak de link hier (twee minuten geldig):</p>
+      <p>Of plak de link van <code>./open.sh --copy</code>:</p>
       <div class="unlock">
         <input type="text" id="unlock-input" placeholder="Plak hier de link" autocomplete="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" aria-label="Link uit open.sh">
         <button type="button" class="btn primary" id="unlock-button">Ontgrendel</button>
       </div>
-      <p class="unlock-error" id="unlock-error" hidden>Deze link is verlopen of klopt niet. Maak een nieuwe met <code>./open.sh</code> of <code>./open.sh --copy</code>.</p>
-      <p class="locked-note">Dat hoeft maar één keer per browser: daarna onthoudt deze pagina de sleutel.</p>
+      <p class="unlock-error" id="unlock-error" hidden>Link verlopen of onjuist.</p>
     </div>
   </section>
 

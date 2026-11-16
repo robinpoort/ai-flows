@@ -1,11 +1,13 @@
 #!/bin/sh
-# AI Flows hook: Claude Code pipes one hook event as JSON on stdin.
+# AI Flows hook: Claude Code (or Codex) pipes one hook event as JSON on stdin.
 # We keep a compact copy (no file contents, long text clipped) in a daily log
-# that the dashboard server reads. Always exits 0 so it can never block Claude.
+# that the dashboard server reads. Always exits 0 and prints nothing, so it can
+# never block or steer the session.
 #
 # install-hooks.js copies this file to ~/.claude/ai-flows/hook.sh and passes
 # the log folder as $1, so a project's environment cannot redirect the log or
-# swap the programs used below.
+# swap the programs used below. $2 names the tool when it is not Claude Code
+# ("codex"); both tools send their events in the same shape.
 
 PATH=/usr/bin:/bin
 export PATH
@@ -13,6 +15,10 @@ export PATH
 # own transcripts (owner only).
 umask 077
 dir="${1:-$HOME/.claude/ai-flows}"
+case "${2:-}" in
+  codex) src=codex ;;
+  *) src="" ;;
+esac
 /bin/mkdir -p "$dir" 2>/dev/null || exit 0
 
 # macOS 15+ ships jq; older Macs usually have it from Homebrew. Only use a jq
@@ -29,7 +35,7 @@ done
 # environment. lockf: concurrent hooks append at once, and lines over ~4 KB
 # would interleave. Every value is clipped before any regex runs: jq's gsub is
 # quadratic, and a tool input can be a 100 KB heredoc.
-HOME=/var/empty /usr/bin/lockf -k -t 5 "$dir/.lock" "$JQ" -c --arg ep "${CLAUDE_CODE_ENTRYPOINT:-}" '
+HOME=/var/empty /usr/bin/lockf -k -t 5 "$dir/.lock" "$JQ" -c --arg ep "${CLAUDE_CODE_ENTRYPOINT:-}" --arg src "$src" '
   def clip($n): if type == "string" and length > $n then .[0:$n] + "…" else . end;
   def summary:
     if type == "object" then
@@ -46,7 +52,8 @@ HOME=/var/empty /usr/bin/lockf -k -t 5 "$dir/.lock" "$JQ" -c --arg ep "${CLAUDE_
       tp: .transcript_path,
       cwd: .cwd,
       mode: .permission_mode,
-      ep: $ep,
+      ep: (if $src == "" then $ep else "" end),
+      src: $src,
       aid: .agent_id,
       atype: .agent_type
     }
