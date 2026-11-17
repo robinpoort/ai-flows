@@ -321,7 +321,10 @@ full view for one load, until the window crosses 760 px or you press the mini
 button in the header. Without a scrollbar the mini view keeps no room free for one. Its mini bar holds the same controls as the header,
 compact: the period (30m, 2u, 8u, 24u), notifications and settings. The
 settings open over the window under that bar, and the settings button, now
-an X, closes them from the same spot. In another app, open http://127.0.0.1:4777/?mini. Below 220×160 only two counters remain.
+an X, closes them from the same spot. In another app, open http://127.0.0.1:4777/?mini. Below 220×160 only three counters remain: **vragen**, **bezig** and **klaar** (finished
+and not looked at yet). A counter with exactly one session opens it with a click
+(or copies its resume command), shown by a small arrow; with more it cannot tell
+which one you mean.
 
 **Steady layout.** Live updates patch rows and the open session in place
 (scroll position and selected text stay), and sessions keep their order while

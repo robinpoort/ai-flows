@@ -109,9 +109,11 @@
       <!-- In mini mode the header's controls (period, notifications, settings) move here. -->
       <div class="mini-bar" id="mini-bar"></div>
     </div>
-    <div class="mini-micro" aria-hidden="true">
-      <div class="micro q"><strong data-count="questions">0</strong><span>vragen</span></div>
-      <div class="micro w"><strong data-count="working">0</strong><span>bezig</span></div>
+    <!-- micro: the counters only; one with a single session opens it -->
+    <div class="mini-micro">
+      <button type="button" class="micro q" data-micro="q"><strong data-count="questions">0</strong><span class="what">vragen</span><span class="go"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 3h4v4M13 3 7.5 8.5M12 9.5V13H3V4h3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
+      <button type="button" class="micro w" data-micro="w"><strong data-count="working">0</strong><span class="what">bezig</span><span class="go"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 3h4v4M13 3 7.5 8.5M12 9.5V13H3V4h3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
+      <button type="button" class="micro d" data-micro="d"><strong data-count="done">0</strong><span class="what">klaar</span><span class="go"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 3h4v4M13 3 7.5 8.5M12 9.5V13H3V4h3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
     </div>
     <div class="mini-body">
       <div class="mini-label" id="mini-q-label">Vragen</div>

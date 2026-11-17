@@ -931,7 +931,7 @@ body.is-mini #settings-button[aria-expanded="true"] .icon-close { display: block
 .mrow.unread .mtitle { font-weight: 600; color: var(--text); }
 .mini-sum .new { color: var(--accent-text); }
 
-/* micro: just the two counters when there is barely any room */
+/* micro: just the counters when there is barely any room */
 .mini-micro { display: none; }
 @media (max-width: 219px), (max-height: 159px) {
   html:has(body.is-mini) { overflow: hidden; }
@@ -940,7 +940,7 @@ body.is-mini #settings-button[aria-expanded="true"] .icon-close { display: block
   body.is-mini .limits { display: none; }
   body.is-mini .mini-micro {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
     min-height: 100vh;
     padding: 6px;
@@ -948,20 +948,41 @@ body.is-mini #settings-button[aria-expanded="true"] .icon-close { display: block
   }
   body.auto-mini .mini-micro { cursor: default; }
   .micro {
+    position: relative;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    padding: 0;
+    border: 0;
     border-radius: 10px;
     background: var(--gray-soft);
     color: var(--muted);
+    font: inherit;
+    cursor: inherit;
   }
+  .micro:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* One session behind it: it opens that one, and says so with a small arrow. */
+  .micro .go { display: none; position: absolute; top: 5px; right: 5px; width: 12px; height: 12px; opacity: .75; }
+  .micro .go svg { display: block; width: 100%; height: 100%; }
+  .micro.one { cursor: pointer; }
+  .micro.one .go { display: block; }
+  .micro.one:hover { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, currentColor 40%, transparent); }
+  .micro.one:active { transform: translateY(1px); }
   .micro strong { font-size: clamp(20px, 22vmin, 44px); line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
-  .micro span { font-size: 11px; margin-top: 2px; }
+  .micro .what { font-size: 11px; margin-top: 2px; }
   .micro.q.hot { background: var(--accent); color: color-mix(in srgb, var(--on-accent) 85%, transparent); }
   .micro.q.hot strong { color: var(--on-accent); }
   .micro.w.hot { background: var(--green-soft); color: var(--green); }
   .micro.w.hot strong { color: var(--green); }
+  .micro.d.hot { background: var(--accent-soft); color: var(--accent-text); }
+  .micro.d.hot strong { color: var(--accent-text); }
+  .micro .what { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+/* Too narrow for three side by side: one above the other. */
+@media (max-width: 159px) {
+  body.is-mini .mini-micro { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ---------------------------------------------------------------- narrow */

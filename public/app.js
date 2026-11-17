@@ -654,9 +654,36 @@
     return { key, html };
   }
 
+  // The micro view's counters. A counter with one session opens it (or
+  // copies its resume command); with more it cannot tell which you mean.
+  const microPick = { q: null, w: null, d: null };
+
+  function renderMicro(lists) {
+    const word = { q: (n) => (n === 1 ? 'vraag' : 'vragen'), w: () => 'bezig', d: () => 'klaar' };
+    for (const k of Object.keys(lists)) {
+      const list = lists[k];
+      const one = list.length === 1 && (list[0].openUrl || list[0].resumeCmd) ? list[0] : null;
+      microPick[k] = one;
+      const tile = $(`.micro[data-micro="${k}"]`);
+      setText($('.what', tile), word[k](list.length));
+      tile.classList.toggle('hot', list.length > 0);
+      tile.classList.toggle('one', !!one);
+      const what = `${list.length} ${word[k](list.length)}`;
+      const how = one ? (one.openUrl ? `Open “${one.title}”` : `Kopieer het resume-commando van “${one.title}”`) : '';
+      setTitle(tile, how);
+      const label = how ? `${what}. ${how}` : what;
+      if (tile.getAttribute('aria-label') !== label) tile.setAttribute('aria-label', label);
+    }
+  }
+
   function renderMini(sessions, questions) {
     miniTools = !!(state && state.toolLabels);
-    const working = sessions.filter((s) => s.status === 'working').length;
+    const busy = sessions.filter((s) => s.status === 'working');
+    const working = busy.length;
+    // Klaar: finished and not looked at yet (the blue ones).
+    const done = sessions.filter((s) => s.unread && sectionOf(s) === 'done');
+    renderMicro({ q: questions, w: busy, d: done });
+    for (const el of $$('[data-count="done"]')) setText(el, done.length);
     const qIds = new Set(questions.map((s) => s.id));
     const flows = sessions.filter((s) => !qIds.has(s.id));
 
@@ -674,8 +701,6 @@
     if (unseen) parts.push(`<span class="new">${unseen} nieuw</span>`);
     setHTML($('#mini-sum'), parts.length ? parts.join(' · ') : 'Alles rustig');
     for (const el of $$('[data-count="working"]')) setText(el, working);
-    $('.micro.q').classList.toggle('hot', questions.length > 0);
-    $('.micro.w').classList.toggle('hot', working > 0);
   }
 
   // Patch a live node into the shape of a fresh one, touching only what differs.
@@ -1308,7 +1333,17 @@
     scrollTo(0, 0);
   }
   $('#mini-expand').addEventListener('click', openFull);
-  $('.mini-micro').addEventListener('click', () => { if (params.has('mini')) openFull(); });
+  $('.mini-micro').addEventListener('click', async (e) => {
+    const tile = e.target.closest('.micro');
+    const s = tile && microPick[tile.dataset.micro];
+    if (s && s.openUrl) { openSession(s); return; }
+    if (s && s.resumeCmd) {
+      await copy(String(s.resumeCmd).replace(INVISIBLE, ''));
+      toast('Gekopieerd. Plak in je terminal.');
+      return;
+    }
+    if (params.has('mini')) openFull();
+  });
 
   openMini.addEventListener('click', () => {
     if (narrowQuery.matches && !params.has('mini')) { setShowFull(false); applyMode(); scrollTo(0, 0); return; }
