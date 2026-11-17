@@ -141,13 +141,11 @@
   };
 
   let windowMin = store.get('window', 120);
-  let tab = store.get('tab', 'questions');
   let state = null;
   let es = null;
   let connected = false;
   let knownQuestions = null;
   let bootBuild = null;
-  const expanded = new Set();
   const htmlCache = new Map();
 
   // ---------------------------------------------------------------- text
@@ -235,7 +233,7 @@
     }
   }
 
-  // ---------------------------------------------------------------- cards
+  // ---------------------------------------------------------------- buttons
 
   const ICON_OPEN = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 3h4v4M13 3 7.5 8.5M12 9.5V13H3V4h3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const ICON_COPY = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="8.5" height="8.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3 10.5V4a1.5 1.5 0 0 1 1.5-1.5H11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
@@ -257,99 +255,206 @@
     ).join('')}</div>`;
   }
 
-  function questionCard(s) {
+  const ICON_FOLDER = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+
+  // ---------------------------------------------------------------- full view
+
+  // Every session in a list by status, beside the whole of the one you pick:
+  // its question with the answers, what it is doing, your prompt and the full
+  // reply. Each row also has its own button to open the session straight away.
+  const SECTIONS = [
+    { key: 'you', label: 'Wacht op jou' },
+    { key: 'busy', label: 'Bezig' },
+    { key: 'done', label: 'Klaar' },
+  ];
+  const asks = (s) => !!s.question && (s.status === 'question' || s.status === 'permission');
+  const sectionOf = (s) => (asks(s) ? 'you' : s.status === 'working' || s.status === 'stale' ? 'busy' : 'done');
+  const folderName = (s) => (s.folder && s.folder.name) || s.project || '';
+
+  // The picked session is kept per tab, across reloads.
+  const picked = {
+    get() { try { return sessionStorage.getItem('ai-flows:selected'); } catch { return null; } },
+    set(id) { try { sessionStorage.setItem('ai-flows:selected', id); } catch {} },
+  };
+  let selectedId = picked.get();
+  let selectedIndex = 0;
+
+  // One line under the title: what the session needs from you or is doing.
+  function rowLine(s) {
     const q = s.question;
-    const key = 'q:' + s.id;
-    const isOpen = expanded.has(key);
-    const perm = q.kind === 'permission';
-    let body;
-    if (q.parts && q.parts.length) {
-      body = q.parts.map((p) => `
-        <div class="part">
-          ${p.header ? `<div class="ph">${esc(p.header)}</div>` : ''}
-          <div class="pq">${esc(p.question)}</div>
-          ${optionsHtml(s, p.options.map((o) => ({ label: o.label, desc: o.description })))}
-        </div>`).join('');
-    } else {
-      let context = q.context;
-      if (!context && q.kind === 'text' && s.last) {
-        const full = plain(s.last.text);
-        const qi = full.lastIndexOf(q.text.slice(0, 30));
-        context = (qi > 0 ? full.slice(0, qi) : full).trim();
-      }
-      body = `
-        <p class="ask">${esc(q.text)}</p>
-        ${q.detail ? `<div class="detail mono">${esc(shortPath(q.detail))}</div>` : ''}
-        ${context ? `<div class="context">${esc(plain(context))}</div>` : ''}
-        ${optionsHtml(s, (q.options || []).map((label) => ({ label })))}`;
+    if (asks(s)) {
+      return q.kind === 'permission' && q.tool
+        ? `${toolName(q.tool)}${q.detail ? ': ' + shortPath(q.detail) : ''}`
+        : q.text.split('\n')[0];
     }
-    const long = (q.context || (s.last && s.last.text) || '').length > 220;
+    const prompt = (s.prompt && s.prompt.text) || (s.autoPrompt && s.autoPrompt.text) || '';
+    if (s.status === 'working' || s.status === 'stale') {
+      const doing = s.activity ? [toolName(s.activity.tool), shortPath(s.activity.sum)].filter(Boolean).join(' · ') : prompt;
+      return s.status === 'stale' ? `Stil · ${doing}` : doing || 'Bezig';
+    }
+    if (s.status === 'error' && s.error) return s.error.text;
+    const text = plain(s.recap || (s.last && s.last.text) || '');
+    return text.split('\n').find((l) => l.trim()) || prompt;
+  }
+
+  function sideRow(s) {
+    const key = 's:' + s.id;
+    const sel = s.id === selectedId;
+    const cls = (MINI_CLASS[s.status] || 'done') + (s.unread ? ' unread' : '') + (sel ? ' sel' : '');
+    const when = (s.question && s.question.ts) || (s.status === 'working' ? s.since : s.lastTs);
+    const app = appOf(s);
+    const open = s.openUrl
+      ? `<a class="srow-open" href="${esc(s.openUrl)}" data-act="open" data-sid="${esc(s.id)}" title="Open in ${esc(app)}" aria-label="${esc(`Open ${s.title} in ${app}`)}">${ICON_OPEN}</a>`
+      : s.resumeCmd
+        ? `<button type="button" class="srow-open" data-act="copy" data-text="${esc(s.resumeCmd)}" title="Kopieer resume-commando" aria-label="${esc(`Kopieer het resume-commando van ${s.title}`)}">${ICON_COPY}</button>`
+        // Nothing to open: keep its place, so the times stay in one column.
+        : '<span class="srow-open none" aria-hidden="true"></span>';
     return {
       key,
       html: `
-      <article class="card qcard ${perm ? 'permission' : ''} ${isOpen ? 'open' : ''}" data-key="${esc(key)}">
-        <div class="meta">
-          <span class="pill ${perm ? 'permission' : 'question'}"><span class="dot"></span>${esc(QUESTION_KIND[q.kind] || 'Vraag')}</span>
-          ${timeEl(q.ts || s.since, 'ago')}
-        </div>
-        ${body}
-        <div class="from"><strong>${esc(s.title)}</strong><span>${esc(s.project)} · ${esc(s.app)}</span></div>
-        <div class="actions">
-          ${openButton(s, true)}
-          <span class="spacer"></span>
-          ${long && !q.parts ? `<button type="button" class="btn link" data-act="toggle" data-key="${esc(key)}">${isOpen ? 'Minder' : 'Meer context'}</button>` : ''}
-        </div>
-      </article>`,
+      <div class="srow ${cls}" data-key="${esc(key)}">
+        <button type="button" class="srow-main" data-act="select" data-sid="${esc(s.id)}" aria-current="${sel}">
+          <span class="sdot"></span>
+          <span class="stitle">${esc(s.title)}</span>
+          ${timeEl(when, 'compact')}
+          <span class="sline">${esc(rowLine(s))}</span>
+          <span class="smeta">${esc(folderName(s))} · ${esc(s.app)}</span>
+        </button>
+        ${open}
+      </div>`,
     };
   }
 
-  function flowCard(s) {
-    const key = 'f:' + s.id;
-    const isOpen = expanded.has(key);
-    const st = STATUS[s.status] || STATUS.idle;
-    const lines = [];
-
-    if (s.prompt && s.prompt.text) {
-      lines.push(`<div class="say you"><span class="who">Jij</span><span class="body">${esc(s.prompt.text)}</span></div>`);
-    } else if (s.autoPrompt) {
-      lines.push(`<div class="say you"><span class="who">Start</span><span class="body">${esc(s.autoPrompt.text)}</span></div>`);
+  function renderSide(sessions, questions) {
+    const groups = { you: questions, busy: [], done: [] };
+    for (const s of sessions) if (!asks(s)) groups[sectionOf(s)].push(s);
+    const order = [...groups.you, ...groups.busy, ...groups.done];
+    // Keep the picked session; when it is gone, take the one now in its place.
+    let i = order.findIndex((s) => s.id === selectedId);
+    if (i < 0 && order.length) {
+      i = Math.min(selectedIndex, order.length - 1);
+      selectedId = order[i].id;
     }
+    selectedIndex = Math.max(0, i);
+
+    const items = [];
+    for (const sec of SECTIONS) {
+      const list = groups[sec.key];
+      if (!list.length) continue;
+      items.push({
+        key: 'h:' + sec.key,
+        html: `<div class="shead ${sec.key}" data-key="h:${sec.key}">${sec.label}<span class="count">${list.length}</span></div>`,
+      });
+      for (const s of list) items.push(sideRow(s));
+    }
+    renderList($('#side-list'), items);
+    setHidden($('#flow-empty'), sessions.length > 0);
+    document.body.classList.toggle('no-sessions', sessions.length === 0);
+    renderDetail(order.length ? find(selectedId) : null);
+  }
+
+  function questionBlock(s) {
+    const q = s.question;
+    const perm = q.kind === 'permission';
+    let inner;
+    if (q.parts && q.parts.length) {
+      inner = q.parts.map((p) => `
+        <div class="part">
+          ${p.header ? `<div class="ph">${esc(p.header)}</div>` : ''}
+          <p class="ask-q">${esc(p.question)}</p>
+          ${optionsHtml(s, p.options.map((o) => ({ label: o.label, desc: o.description })))}
+        </div>`).join('');
+    } else {
+      inner = `
+        <p class="ask-q">${esc(q.text)}</p>
+        ${q.detail ? `<div class="ask-detail mono">${esc(shortPath(q.detail))}</div>` : ''}
+        ${q.context ? `<p class="d-text muted">${esc(plain(q.context))}</p>` : ''}
+        ${optionsHtml(s, (q.options || []).map((label) => ({ label })))}`;
+    }
+    return `<section class="d-card ${perm ? 'permission' : 'ask'}"><div class="d-label">${esc(QUESTION_KIND[q.kind] || 'Vraag')}</div>${inner}</section>`;
+  }
+
+  function detailHtml(s) {
+    const st = STATUS[s.status] || STATUS.idle;
+    const app = appOf(s);
+    const out = [];
+    out.push(`
+      <div class="d-meta">
+        <span class="pill ${st.cls}${s.unread ? ' unread' : ''}"><span class="dot"></span>${esc(s.unread ? 'Nieuw' : st.label)}</span>
+        <span class="chip-app">${esc(s.app)}</span>
+        <span class="spacer"></span>
+        ${statusTime(s)}
+      </div>
+      <h2 class="d-title">${esc(s.title)}</h2>
+      <div class="d-path" title="${esc(s.cwd || '')}">${ICON_FOLDER}<span>${esc(s.project)}${s.cwd ? ` · ${esc(shortPath(s.cwd))}` : ''}</span></div>`);
+
+    if (asks(s)) out.push(questionBlock(s));
 
     if (s.status === 'working' || s.status === 'stale') {
-      if (s.activity) {
-        lines.push(`<div class="activity"><span class="tool">${esc(toolName(s.activity.tool))}</span><span class="what mono" title="${esc(s.activity.sum)}">${esc(shortPath(s.activity.sum))}</span></div>`);
+      const rows = [];
+      if (s.activity) rows.push(`<div class="act-row"><span class="tool">${esc(toolName(s.activity.tool))}</span><span class="what mono">${esc(shortPath(s.activity.sum))}</span></div>`);
+      for (const a of s.subagents || []) {
+        rows.push(`<div class="act-row"><span class="tool">Subagent</span><span class="what">${esc(a.type || '')}${a.activity ? ` · ${esc(toolName(a.activity.tool))} <span class="mono">${esc(shortPath(a.activity.sum || ''))}</span>` : ''}</span></div>`);
       }
-      if (s.subagents && s.subagents.length) {
-        lines.push(`<div class="subs">${s.subagents.length === 1 ? '1 subagent' : s.subagents.length + ' subagents'} aan het werk</div>`);
-      }
-    } else if (s.status === 'question' || s.status === 'permission') {
-      lines.push(`<div class="say claude"><span class="who">Vraag</span><span class="body">${esc(s.question ? s.question.text : '')}</span></div>`);
-    } else if (s.status === 'error' && s.error) {
-      lines.push(`<div class="say claude"><span class="who">Fout</span><span class="body">${esc(s.error.text)}</span></div>`);
-    } else if (s.recap || s.last) {
-      lines.push(`<div class="say claude"><span class="who">${esc(appOf(s))}</span><span class="body">${esc(plain(s.recap || s.last.text))}</span></div>`);
+      if (rows.length) out.push(`<section class="d-card act ${s.status}"><div class="d-label">${s.status === 'stale' ? 'Laatst gezien' : 'Nu bezig'}</div>${rows.join('')}</section>`);
     }
 
-    const long = ((s.prompt && s.prompt.text) || '').length > 160 || ((s.recap || (s.last && s.last.text) || '').length > 200);
-    return {
-      key,
-      html: `
-      <article class="card flow ${isOpen ? 'open' : ''}" data-key="${esc(key)}">
-        <div class="meta">
-          <span class="pill ${st.cls}${s.unread ? ' unread' : ''}"${s.unread ? ` title="Nog niet bekeken in ${esc(appOf(s))}"` : ''}><span class="dot"></span>${esc(st.label)}</span>
-          <span class="chip-app">${esc(s.app)}</span>
-          ${statusTime(s)}
-        </div>
-        <h3 class="title">${esc(s.title)}</h3>
-        <div class="project" title="${esc(s.cwd || '')}">${esc(s.project)}${s.projectDetail && s.projectDetail !== s.project ? ` <span class="sep">·</span> ${esc(s.projectDetail)}` : ''}</div>
-        ${lines.join('')}
-        <div class="actions">
-          ${openButton(s, false)}
-          <span class="spacer"></span>
-          ${long ? `<button type="button" class="btn link" data-act="toggle" data-key="${esc(key)}">${isOpen ? 'Minder' : 'Meer'}</button>` : ''}
-        </div>
-      </article>`,
-    };
+    if (s.status === 'error' && s.error) {
+      out.push(`<section class="d-card error"><div class="d-label">Fout</div><p class="d-text">${esc(s.error.text)}</p></section>`);
+    }
+
+    const last = s.last && s.last.text ? plain(s.last.text) : '';
+    const recap = s.recap ? plain(s.recap) : '';
+    if (recap && !asks(s) && !last.includes(recap)) {
+      out.push(`<section class="d-card"><div class="d-label">Samenvatting</div><p class="d-text">${esc(recap)}</p></section>`);
+    }
+
+    const msgs = [];
+    if (s.prompt && s.prompt.text) msgs.push(`<div class="msg you"><span class="who">Jij</span><div class="body">${esc(s.prompt.text)}</div></div>`);
+    else if (s.autoPrompt) msgs.push(`<div class="msg you"><span class="who">Start</span><div class="body">${esc(s.autoPrompt.text)}</div></div>`);
+    if (last) msgs.push(`<div class="msg"><span class="who">${esc(app)}</span><div class="body">${esc(last)}</div></div>`);
+    if (msgs.length) out.push(`<div class="convo">${msgs.join('')}</div>`);
+    return out.join('');
+  }
+
+  function detailActions(s) {
+    return `${openButton(s, true)}
+      <button type="button" class="btn" data-act="mark" data-sid="${esc(s.id)}">${needsReading(s) ? 'Markeer als gelezen' : 'Markeer als ongelezen'}</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn link" data-act="close" data-sid="${esc(s.id)}">Sluit sessie</button>`;
+  }
+
+  // Patch the children of a container to new HTML, so a session at work
+  // updates in place: scroll position and any text you selected stay.
+  function patch(container, html) {
+    if (container.dataset.html === html) return;
+    container.dataset.html = html;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const fresh = [...tmp.childNodes];
+    const live = [...container.childNodes];
+    fresh.forEach((n, i) => { if (i < live.length) morph(live[i], n, 1); else container.appendChild(n); });
+    for (let i = fresh.length; i < live.length; i++) live[i].remove();
+  }
+
+  let shownId = null;
+  function renderDetail(s) {
+    const body = $('#d-body');
+    if (s && s.id !== shownId) $('#d-scroll').scrollTop = 0;
+    shownId = s ? s.id : null;
+    patch(body, s ? detailHtml(s) : '');
+    patch($('#d-actions'), s ? detailActions(s) : '');
+    updateTimes($('#detail'));
+  }
+
+  function select(id, show) {
+    if (id !== selectedId) {
+      selectedId = id;
+      picked.set(id);
+    }
+    // A narrow window shows the list or the session: this one now.
+    if (show) document.body.classList.add('show-detail');
+    render();
   }
 
   // Blue means "look at me": an unseen answer, or a question. Both can be
@@ -358,9 +463,9 @@
 
   // ---------------------------------------------------------------- folders
 
-  // Sessions are grouped by the folder they were started in, A to Z, like the
-  // Claude app's sidebar. A folder can be folded shut; that is remembered per
-  // browser and shared by the full dashboard and the mini view.
+  // In the mini view sessions are grouped by the folder they were started in,
+  // A to Z, like the Claude app's sidebar. A folder can be folded shut; that
+  // is remembered per browser.
   const collapsed = new Set(store.get('collapsed', []));
 
   function byFolder(sessions) {
@@ -414,7 +519,7 @@
     render();
   }
 
-  // Folding in the mini window shows up in the full dashboard, and back.
+  // Folding in one mini window shows up in another one.
   window.addEventListener('storage', (e) => {
     if (e.key !== 'ai-flows:collapsed') return;
     collapsed.clear();
@@ -546,21 +651,11 @@
       .filter((s) => s.question && (s.status === 'question' || s.status === 'permission'))
       .sort((a, b) => ((a.status === 'permission' ? 0 : 1) - (b.status === 'permission' ? 0 : 1)) || ((b.question.ts || 0) - (a.question.ts || 0)));
 
-    renderList($('#question-list'), grouped('q', questions, questionCard, 'folder'));
-    // No open questions: the questions panel (and its tab) steps aside.
-    document.body.classList.toggle('no-questions', questions.length === 0);
-
-    renderList($('#flow-grid'), grouped('f', sessions, flowCard, 'folder'));
-    setHidden($('#flow-empty'), sessions.length > 0);
-
-    const working = sessions.filter((s) => s.status === 'working').length;
-    const unseen = sessions.filter((s) => s.unread).length;
-    setText($('#flows-sub'), `${sessions.length} in de laatste ${windowLabel(state.windowMin)}${working ? ` · ${working} bezig` : ''}${unseen ? ` · ${unseen} nieuw` : ''}`);
+    renderSide(sessions, questions);
     for (const el of $$('[data-count="questions"]')) {
       setText(el, questions.length);
       el.classList.toggle('hot', questions.length > 0);
     }
-    for (const el of $$('[data-count="flows"]')) setText(el, sessions.length);
     { const t = questions.length ? `(${questions.length}) AI Flows` : 'AI Flows'; if (document.title !== t) document.title = t; }
     renderMini(sessions, questions);
     renderLimits();
@@ -638,19 +733,13 @@
   }
   if (window.ResizeObserver) new ResizeObserver(syncLimitsHeight).observe(limitsEl);
 
-  function windowLabel(min) {
-    if (min < 60) return `${min} min`;
-    if (min === 60) return 'uur';
-    return `${Math.round(min / 60)} uur`;
-  }
-
   function announce(questions) {
     const keys = new Map(questions.map((s) => [s.id + ':' + (s.question.ts || ''), s]));
     if (knownQuestions) {
       for (const [k, s] of keys) {
         if (knownQuestions.has(k)) continue;
-        const card = $(`#question-list [data-key="q:${CSS.escape(s.id)}"]`);
-        if (card) { card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash'); }
+        const row = $(`#side-list [data-key="s:${CSS.escape(s.id)}"]`);
+        if (row) { row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash'); }
       }
     }
     knownQuestions = new Set(keys.keys());
@@ -760,8 +849,20 @@
     settingsPanel.querySelector('input[name="limit-codex"]').checked = !!limitsOn.codex;
   }
 
+  // While the settings fill the mini view only they scroll, not the page under
+  // them as well. The page's classic scrollbar goes away then; the mini head
+  // gets its width as extra padding (--sb), so its buttons stay in place.
+  function lockPage(on) {
+    const body = document.body;
+    body.classList.remove('settings-open');
+    if (!on) return;
+    body.style.setProperty('--sb', `${innerWidth - document.documentElement.clientWidth}px`);
+    body.classList.add('settings-open');
+  }
+
   function toggleSettings(open) {
     const mini = document.body.classList.contains('is-mini');
+    lockPage(open && mini);
     settingsPanel.hidden = !open;
     settingsButton.setAttribute('aria-expanded', String(open));
     setTitle(settingsButton, open && mini ? 'Sluiten' : 'Instellingen');
@@ -787,8 +888,10 @@
   }
 
   settingsButton.addEventListener('click', () => toggleSettings(settingsPanel.hidden));
+  // A click outside closes the settings, but not one on the toast: that
+  // answers a change made in the settings, which should stay open for it.
   document.addEventListener('pointerdown', (e) => {
-    if (!settingsPanel.hidden && !e.target.closest('#settings-panel, #settings-button')) toggleSettings(false);
+    if (!settingsPanel.hidden && !e.target.closest('#settings-panel, #settings-button, #toast')) toggleSettings(false);
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !settingsPanel.hidden) { toggleSettings(false); settingsButton.focus(); }
@@ -893,7 +996,7 @@
 
   document.addEventListener('contextmenu', (e) => {
     const el = e.target.closest('[data-key]');
-    const s = el && /^[fmq]:/.test(el.dataset.key) ? find(el.dataset.key.slice(2)) : null;
+    const s = el && /^[ms]:/.test(el.dataset.key) ? find(el.dataset.key.slice(2)) : null;
     if (!s) { closeCtx(); return; }
     e.preventDefault();
     openCtx(e.clientX, e.clientY, s);
@@ -946,11 +1049,33 @@
       toast('Gekopieerd. Plak in je terminal.');
     } else if (act === 'fold') {
       toggleFolder(el.dataset.fold);
-    } else if (act === 'toggle') {
-      const key = el.dataset.key;
-      if (expanded.has(key)) expanded.delete(key); else expanded.add(key);
-      render();
+    } else if (act === 'select') {
+      select(el.dataset.sid, true);
+    } else if (act === 'mark') {
+      const s = find(el.dataset.sid);
+      if (s) markSession(s, needsReading(s) ? 'read' : 'unread');
+    } else if (act === 'close') {
+      const s = find(el.dataset.sid);
+      if (s) markSession(s, 'closed');
     }
+  });
+
+  // Up and down walk the list, picking each session on the way.
+  $('#side-list').addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    const rows = $$('.srow-main', $('#side-list'));
+    const i = rows.indexOf(document.activeElement);
+    if (i < 0) return;
+    e.preventDefault();
+    const next = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))];
+    next.focus();
+    select(next.dataset.sid, false);
+  });
+
+  $('#d-back').addEventListener('click', () => {
+    document.body.classList.remove('show-detail');
+    const row = $(`#side-list [data-key="s:${CSS.escape(selectedId || '')}"] .srow-main`);
+    if (row) row.focus();
   });
 
   // window selector
@@ -964,19 +1089,6 @@
     store.set('window', windowMin);
     syncWindowButtons();
     connect();
-  });
-
-  // tabs (narrow screens)
-  function syncTabs() {
-    document.body.dataset.tab = tab;
-    for (const b of $$('.tabs button')) b.classList.toggle('active', b.dataset.tab === tab);
-  }
-  $('.tabs').addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-tab]');
-    if (!b) return;
-    tab = b.dataset.tab;
-    store.set('tab', tab);
-    syncTabs();
   });
 
   // macOS notifications: the server sends them (also with no dashboard open);
@@ -1010,16 +1122,17 @@
     }
   });
 
-  // mini mode: ?mini, or automatically in a window narrower than 600 px. The
-  // header's controls move into the mini bar, so they work the same in both.
+  // mini mode: ?mini, or automatically in a window narrower than 760 px, where
+  // the list and a session no longer fit side by side. The header's controls
+  // move into the mini bar, so they work the same in both.
   //
   // "Volledig dashboard openen" in a narrow window shows the full view for now:
   // kept across reloads of this tab, dropped again as soon as the window
-  // crosses 600 px either way, or with the mini button in the header. (It used
+  // crosses 760 px either way, or with the mini button in the header. (It used
   // to load ?full, which locked the page in the full view.) ?full itself still
   // shows the full view, for that one load.
   const params = new URLSearchParams(location.search);
-  const narrowQuery = matchMedia('(max-width: 599px)');
+  const narrowQuery = matchMedia('(max-width: 759px)');
   const controls = $('.top .controls');
   const controlsHome = controls.parentNode;
   const openMini = $('#open-mini');
@@ -1105,7 +1218,6 @@
 
   applyMode();
   syncWindowButtons();
-  syncTabs();
   syncBell();
   (async () => {
     const code = codeFromLink();

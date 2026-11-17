@@ -2,19 +2,19 @@
 
 A local dashboard of your AI coding sessions on macOS, Claude Code and OpenAI
 Codex side by side: what is working right now, what is waiting for you, and
-what finished recently (last 30 minutes to 24 hours). Open questions get their
-own panel, a macOS notification tells you when a new one comes in, and one
-click opens the session in its app.
+what finished recently (last 30 minutes to 24 hours). A macOS notification
+tells you when a new question comes in, and one click opens the session in its
+app.
 
-- **Vragen voor jou**: permission prompts, choices, plans to approve and
-  questions at the end of a turn, with their answer options. Only there while
-  something is open; otherwise the flows get the full width.
-- **Flows**: every recent session with its status, your last prompt, what it is
-  doing right now (tool, subagents) or how it ended.
-- Both are **grouped by folder**, A to Z, like the Claude app's sidebar, and a
-  folder folds shut with a click.
-- **Mini view** for a corner of your screen, and **macOS notifications** that
-  are withdrawn again once you answer.
+- **A list by status**: **Wacht op jou** (permission prompts, choices, plans to
+  approve and questions at the end of a turn), **Bezig** and **Klaar**, one row
+  per session with what it needs or is doing, and its own button to open it.
+- **The session you pick, in full** beside it: the question with its answer
+  options, what it is doing right now (tool, subagents), your last prompt and
+  the whole reply.
+- **Mini view** for a corner of your screen, grouped by folder like the Claude
+  app's sidebar, and **macOS notifications** that are withdrawn again once you
+  answer.
 
 Everything stays on your Mac: the server only listens on 127.0.0.1 and sends
 nothing anywhere.
@@ -254,20 +254,29 @@ A click on a notification always brings Claude forward without asking: the
 helper hands over the focus (`yieldActivation`).
 
 **Read and unread.** A finished answer you have not opened in Claude yet gets
-a blue dot. Right-click a flow (card, question or mini row) to mark it unread
+a blue dot. Right-click a session (in the list or a mini row), or use the
+button under the open session, to mark it unread
 (it stays blue until you open it in Claude) or read (also for one that stays
 blue when it should not). Marks are kept in `~/.claude/ai-flows/marks.json`.
 
-**Folders and closing.** Sessions are grouped by the folder they were started
-in (for the Claude app its `originCwd`; a worktree counts as its repository, and
-a session started from another one sits with that one, as in the app's
-sidebar). Folders are sorted A to Z; click a folder to fold it shut. A shut
+**Folders and closing.** Every session names the folder it was started in
+(for the Claude app its `originCwd`; a worktree counts as its repository, and a
+session started from another one sits with that one, as in the app's sidebar).
+The mini view groups by it, A to Z; click a folder to fold it shut. A shut
 folder shows what it holds ("1 wacht · 2 bezig") and turns its count blue when
-something in it needs you. Folding is remembered per browser and shared with
-the mini view. Right-click a session and choose **Sluit sessie** to drop one you
-are done with, even inside the time window: it stays away until you send it a
-new message or it asks you something new, and the toast offers
-**Ongedaan maken**. Closing only hides it here; the session itself is untouched.
+something in it needs you. Folding is remembered per browser. **Sluit sessie**
+(under the open session, or right-click) drops one you are done with, even
+inside the time window: it stays away until you send it a new message or it
+asks you something new, and the toast offers **Ongedaan maken**. Closing only
+hides it here; the session itself is untouched.
+
+**Full view.** The list on the left keeps the session you picked (per tab,
+across reloads); when that one leaves the period, the one now in its place is
+picked. Click a row or walk the list with the arrow keys; the button at the end
+of a row opens that session straight away (or copies its resume command).
+Answer buttons copy the answer and open the session, so you paste it with ⌘V.
+What a session says can be selected and copied. Narrower than 760 px it is the
+mini view.
 
 **Notifications.** The server checks every 2 seconds. A question must stay open
 for 4 seconds before it is announced (no pop-up while you are already
@@ -286,23 +295,23 @@ separately, and macOS rounds the corners.
 
 **Mini view.** One row per session under its folder: status dot, title and
 time; questions also show the question, and without open questions that part
-is left out. It switches on in a window narrower than 600 px, with `?mini`
+is left out. It switches on in a window narrower than 760 px (where the list
+and a session no longer fit side by side), with `?mini`
 at any size, or via **Mini-venster**, which opens a 320×460 pop-up. Mini
 because the window is narrow: widen it for the full view (no button for it).
 The pop-up and `?mini` have **Volledig dashboard openen**; `?full` shows the
-full view for one load, until the window crosses 600 px or you press the mini
+full view for one load, until the window crosses 760 px or you press the mini
 button in the header. Without a scrollbar the mini view keeps no room free for one. Its mini bar holds the same controls as the header,
 compact: the period (30m, 2u, 8u, 24u), notifications and settings. The
 settings open over the window under that bar, and the settings button, now
 an X, closes them from the same spot. In another app, open http://127.0.0.1:4777/?mini. Below 220×160 only two counters remain.
 
-**Steady layout.** Live updates patch cards in place, and sessions keep their
-order while they work (sorted by when they entered their status). The header
-is solid (no `backdrop-filter`), the only animation is the live dot's opacity,
-and `html { scrollbar-gutter: stable }` keeps the width the same whether a
-classic scrollbar shows or not. Without that, in a 15 px band of widths where
-the card grid gains a column, the scrollbar appearing made the page shorter,
-which removed the scrollbar again, and the layout flickered.
+**Steady layout.** Live updates patch rows and the open session in place
+(scroll position and selected text stay), and sessions keep their order while
+they work (sorted by when they entered their status). The header is solid (no
+`backdrop-filter`) and the only animation is the live dot's opacity. The full
+view does not scroll as a page: the list and the session each scroll on their
+own.
 
 ## Codex
 
@@ -325,7 +334,7 @@ few seconds:
   `/hooks` in the CLI) and trust the AI Flows entries. Until then everything
   else works; a permission prompt just shows as "Bezig".
 
-Codex sessions show **Codex-app** or **Codex CLI** on their card and
+Codex sessions show **Codex-app** or **Codex CLI** with their name and
 **Open in Codex**, which opens `codex://threads/<id>` in the app; CLI threads
 offer a `codex resume` command to copy instead. **Instellingen → Mini-venster →
 Toon de AI-tool** (off by default) adds a Claude or Codex label to each row of

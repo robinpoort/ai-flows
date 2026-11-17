@@ -70,15 +70,6 @@ html, body { margin: 0; }
 body { -webkit-user-select: none; user-select: none; cursor: default; }
 input, textarea { -webkit-user-select: text; user-select: text; cursor: text; }
 
-/* Always keep room for a classic scrollbar. Otherwise, in a 15 px band of
-   widths, the scrollbar appearing makes the card grid drop a column, the
-   page gets shorter, the scrollbar goes away, the column comes back… and the
-   layout flickers between the two. */
-html { scrollbar-gutter: stable; }
-/* The mini view is one column, so it has no such loop: no empty band on the
-   right when nothing scrolls. */
-html:has(body.is-mini) { scrollbar-gutter: auto; }
-
 body {
   background: var(--bg);
   color: var(--text);
@@ -166,8 +157,6 @@ h1 { margin: 0; font-size: 18px; letter-spacing: -.01em; }
 
 /* ---------------------------------------------------------------- layout */
 
-.tabs { display: none; }
-
 .notice {
   margin: 16px 24px 0;
   padding: 12px 16px;
@@ -177,29 +166,12 @@ h1 { margin: 0; font-size: 18px; letter-spacing: -.01em; }
   font-size: 14px;
 }
 
-.layout {
-  display: grid;
-  grid-template-columns: minmax(340px, 430px) minmax(0, 1fr);
-  gap: 24px;
-  padding: 20px 24px 48px;
-  align-items: start;
-}
-
-.panel-head { display: flex; align-items: baseline; gap: 10px; margin: 2px 2px 12px; }
-h2 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
-.panel-head .sub { color: var(--muted); font-size: 14px; }
-
-.questions {
-  position: sticky;
-  top: 86px;
-  max-height: calc(100vh - 104px - var(--lim, 0px));
-  overflow: auto;
-  scrollbar-gutter: stable;
-  padding: 16px;
-  border-radius: 18px;
-  background: var(--q-panel);
-  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
-}
+/* The full view fills the window: the header on top, then the list and the
+   session you picked side by side, each scrolling on its own. The limits bar
+   keeps its room through the body's padding. */
+body:not(.is-mini):not(.locked) { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.top, .notice { flex: none; }
+.layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 380px minmax(0, 1fr); }
 
 .count {
   display: inline-grid;
@@ -213,49 +185,6 @@ h2 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
   font-size: 12.5px;
   font-weight: 600;
 }
-.count.big { margin-left: auto; min-width: 28px; height: 28px; border-radius: 14px; font-size: 14px; }
-.count.hot { background: var(--accent); color: var(--on-accent); }
-
-.list { display: flex; flex-direction: column; gap: 12px; }
-
-/* No open questions: the questions panel and its tab step aside, and the
-   flows get the full width. */
-body.no-questions .questions,
-body.no-questions .tabs { display: none; }
-body.no-questions .layout { grid-template-columns: minmax(0, 1fr); }
-body.no-questions[data-tab="questions"] .flows { display: block; }
-
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; }
-
-/* Folder headers: the folder a session was started in, like Claude's sidebar.
-   Click to fold a folder shut. */
-.folder {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 32px;
-  margin: 0;
-  padding: 4px 6px;
-  border: 0;
-  border-radius: 8px;
-  background: none;
-  color: var(--muted);
-  font-size: 14.5px;
-  font-weight: 600;
-  text-align: left;
-  cursor: pointer;
-}
-.grid > .folder { grid-column: 1 / -1; }
-.grid > .folder:not(:first-child), .list > .folder:not(:first-child) { margin-top: 10px; }
-.folder:hover { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
-.folder:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.folder .chev, .mfolder .chev { flex: none; transition: transform .15s; }
-.folder .chev { width: 16px; height: 16px; }
-.folder[aria-expanded="false"] .chev, .mfolder[aria-expanded="false"] .chev { transform: rotate(-90deg); }
-.folder .fname, .mfolder .fname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.folder .fsum { margin-left: auto; padding-left: 8px; font-size: 13px; font-weight: 500; white-space: nowrap; }
-.folder.hot .count, .mfolder.hot .count { background: var(--accent); color: var(--on-accent); }
 
 .empty {
   display: flex;
@@ -267,29 +196,155 @@ body.no-questions[data-tab="questions"] .flows { display: block; }
   color: var(--muted);
   font-size: 14px;
 }
-.empty svg { width: 46px; height: 46px; color: var(--green); margin-bottom: 6px; }
-.flows .empty svg { color: var(--faint); }
+.empty svg { width: 46px; height: 46px; color: var(--faint); margin-bottom: 6px; }
 .empty strong { color: var(--text); font-size: 15px; }
 
-/* ---------------------------------------------------------------- cards */
+/* No sessions at all: just the calm empty state, in the middle. */
+body.no-sessions .layout { grid-template-columns: minmax(0, 1fr); }
+body.no-sessions .detail { display: none; }
+body.no-sessions .side { display: grid; place-items: center; border-right: 0; background: none; }
 
-.card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 16px 16px 14px;
-  border-radius: var(--radius);
+/* ---------------------------------------------------------------- list */
+
+.side {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 10px 20px;
   background: var(--surface);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow);
-  min-width: 0;
+  border-right: 1px solid var(--line);
 }
-.card.flash { animation: flash 1.4s ease-out; }
+.shead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 18px 10px 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.shead:first-child { padding-top: 10px; }
+.shead .count { min-width: 20px; height: 20px; padding: 0 6px; font-size: 11.5px; letter-spacing: 0; }
+.shead.you { color: var(--accent-text); }
+.shead.you .count { background: var(--accent); color: var(--on-accent); }
 
-.meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
-.meta .sep { color: var(--faint); }
-.meta .time { margin-left: auto; white-space: nowrap; }
+.srow { display: flex; align-items: center; border-radius: 10px; }
+.srow + .srow { margin-top: 1px; }
+.srow:hover { background: var(--surface-2); }
+.srow.sel { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.srow.flash { animation: rowflash 1.4s ease-out; }
+.srow-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  column-gap: 10px;
+  padding: 9px 4px 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.srow-main:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sdot { width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--faint); justify-self: center; }
+.stitle { font-size: 14px; font-weight: 600; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srow-main .time { font-size: 12px; line-height: 20px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sline,
+.smeta { grid-column: 2 / -1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sline { font-size: 13px; line-height: 18px; color: var(--muted); }
+.smeta { margin-top: 1px; font-size: 12px; line-height: 16px; color: var(--faint); }
+
+/* Its own button on every row: open the session straight away. Quiet until
+   you point at the row (or picked it), but always there. */
+.srow-open {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin: 0 6px 0 2px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--faint);
+  text-decoration: none;
+  cursor: pointer;
+}
+.srow-open svg { width: 15px; height: 15px; }
+.srow-open.none { visibility: hidden; }
+.srow:hover .srow-open,
+.srow.sel .srow-open { color: var(--muted); border-color: var(--line); background: var(--surface); box-shadow: inset 0 -2px 0 var(--edge-soft); }
+.srow .srow-open:hover { color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.srow-open:active { transform: translateY(1px); box-shadow: none !important; }
+.srow-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Status dots, as in the mini view. */
+.srow.question .sdot { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.srow.permission .sdot { background: var(--amber-fill); box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber-fill) 22%, transparent); }
+.srow.question .sline { color: var(--text); }
+.srow.permission .sline { color: var(--amber); }
+.srow.working .sdot { background: var(--green); }
+.srow.attention .sdot { background: transparent; border: 1.5px solid var(--amber-fill); }
+.srow.error .sdot { background: var(--red); }
+.srow.done .sdot { background: transparent; border: 1.5px solid var(--faint); }
+.srow.done .stitle { font-weight: 500; color: var(--muted); }
+/* Finished, but you have not looked at it in Claude yet. */
+.srow.unread .sdot { background: var(--accent); border: 0; }
+.srow.unread .stitle { font-weight: 600; color: var(--text); }
+
+/* ---------------------------------------------------------------- detail */
+
+.detail { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.d-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 28px 40px 36px; }
+.d-wrap { max-width: 860px; margin: 0 auto; }
+.d-back { display: none; }
+.d-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.d-meta .spacer { flex: 1; }
+.d-title { margin: 12px 0 4px; font-size: 26px; line-height: 1.2; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.d-path { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: 14px; }
+.d-path svg { width: 15px; height: 15px; flex: none; }
+.d-path span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.d-card { margin-top: 22px; padding: 18px 20px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); }
+.d-card.ask { background: var(--q-panel); border-color: color-mix(in srgb, var(--accent) 22%, var(--line)); }
+.d-card.permission { background: var(--amber-soft); border-color: color-mix(in srgb, var(--amber-fill) 30%, var(--line)); }
+.d-card.error { background: var(--red-soft); border-color: color-mix(in srgb, var(--red) 25%, var(--line)); }
+.d-label { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); }
+.d-card.ask .d-label { color: var(--accent-text); }
+.d-card.permission .d-label { color: var(--amber); }
+.d-card.error .d-label { color: var(--red); }
+.d-card.act.working .d-label { color: var(--green); }
+.d-card.act.stale .d-label { color: var(--amber); }
+.ask-q { margin: 6px 0 0; font-size: 20px; font-weight: 650; line-height: 1.35; letter-spacing: -.01em; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ask-detail { margin-top: 10px; padding: 8px 10px; border-radius: 9px; background: var(--surface); border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
+.d-text { margin: 8px 0 0; font-size: 15px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.d-text.muted { color: var(--muted); }
+.d-card .options { margin-top: 16px; }
+.part + .part { margin-top: 18px; padding-top: 16px; border-top: 1px dashed color-mix(in srgb, var(--accent) 25%, var(--line)); }
+.part .ph { margin-top: 6px; font-size: 13px; font-weight: 650; color: var(--accent-text); }
+.part .ph + .ask-q { margin-top: 2px; }
+.act-row { display: flex; gap: 10px; align-items: baseline; margin-top: 8px; font-size: 14px; min-width: 0; }
+.act-row .tool { flex: none; font-weight: 650; color: var(--green); }
+.d-card.stale .act-row .tool { color: var(--amber); }
+.act-row .what { min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
+
+.convo { display: grid; gap: 18px; margin-top: 28px; }
+.msg { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 14px; }
+.msg .who { padding-top: 3px; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); }
+.msg .body { font-size: 15px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.you .body { padding: 10px 14px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
+
+/* What a session says can be selected and copied. */
+.d-title, .ask-q, .ask-detail, .d-text, .msg .body { -webkit-user-select: text; user-select: text; cursor: text; }
+
+.d-bar { flex: none; padding: 12px 40px; border-top: 1px solid var(--line); background: var(--surface); }
+.d-bar .d-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.d-bar .spacer { flex: 1; }
 
 .pill {
   display: inline-flex;
@@ -309,52 +364,9 @@ body.no-questions[data-tab="questions"] .flows { display: block; }
 .pill.permission { background: var(--amber-soft); color: var(--amber); }
 .pill.error { background: var(--red-soft); color: var(--red); }
 .pill.stale { background: var(--amber-soft); color: var(--amber); }
-.pill.done.unread,
-.pill.idle.unread { background: var(--accent-soft); color: var(--accent-text); }
+.pill.unread { background: var(--accent-soft); color: var(--accent-text); }
 
 .chip-app { font-size: 12px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); }
-
-.title { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: -.005em; line-height: 1.3; overflow-wrap: anywhere; }
-.project { font-size: 13px; color: var(--muted); margin-top: -6px; overflow-wrap: anywhere; }
-
-.say {
-  font-size: 14px;
-  color: var(--text);
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 8px;
-  align-items: start;
-}
-.say .who {
-  font-size: 11.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .04em;
-  color: var(--faint);
-  padding-top: 2px;
-  min-width: 46px;
-}
-.say .body { white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.say.claude .body { color: var(--muted); }
-.card.open .say .body { -webkit-line-clamp: unset; display: block; }
-
-.activity {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  padding: 8px 10px;
-  border-radius: 9px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  font-size: 13px;
-  min-width: 0;
-}
-.activity .tool { font-weight: 650; color: var(--green); white-space: nowrap; }
-.activity .what { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.subs { font-size: 12.5px; color: var(--muted); }
-
-.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 2px; }
-.actions .spacer { flex: 1; }
 
 .btn {
   display: inline-flex;
@@ -383,27 +395,13 @@ body.no-questions[data-tab="questions"] .flows { display: block; }
 .btn.link { border-color: transparent; background: transparent; color: var(--muted); padding-inline: 6px; box-shadow: none; }
 .btn.link:hover { color: var(--text); }
 
-/* question cards */
-
-.qcard { border-left: 4px solid var(--accent); }
-.qcard.permission { border-left-color: var(--amber); }
-.qcard .ask { margin: 0; font-size: 17px; font-weight: 650; line-height: 1.35; letter-spacing: -.01em; white-space: pre-wrap; overflow-wrap: anywhere; }
-.qcard .detail { padding: 8px 10px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--line); font-size: 13px; overflow-wrap: anywhere; white-space: pre-wrap; }
-.qcard .context { font-size: 13.5px; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.qcard.open .context { display: block; }
-.qcard .from { font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 1px; padding-top: 8px; border-top: 1px solid var(--line); }
-.qcard .from strong { color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
-.part + .part { margin-top: 6px; padding-top: 10px; border-top: 1px dashed var(--line); }
-.part .ph { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--accent-text); margin-bottom: 2px; }
-.part .pq { font-weight: 600; margin-bottom: 8px; }
-
 .options { display: flex; flex-wrap: wrap; gap: 8px; }
 .option {
   min-height: 38px;
   padding: 8px 14px;
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
-  background: var(--accent-soft);
+  background: var(--surface);
   color: var(--accent-text);
   font-weight: 600;
   font-size: 14px;
@@ -583,6 +581,8 @@ body.is-mini .lim-nums { flex: none; min-width: 8.5ch; justify-content: flex-end
   cursor: pointer;
 }
 .toast-close svg { width: 14px; height: 14px; }
+/* Full view: above the session's button bar, not over its buttons. */
+body:not(.is-mini) .toast { bottom: calc(76px + var(--lim, 0px)); }
 .toast-close:hover,
 .toast-close:focus-visible { opacity: 1; background: color-mix(in srgb, var(--bg) 16%, transparent); outline: none; }
 /* Small windows, like the mini view: the full width along the bottom. */
@@ -595,9 +595,8 @@ body.is-mini .lim-nums { flex: none; min-width: 8.5ch; justify-content: flex-end
   0%, 100% { opacity: 1; }
   50% { opacity: .45; }
 }
-@keyframes flash {
-  0% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent); }
-  100% { box-shadow: var(--shadow); }
+@keyframes rowflash {
+  0% { background: color-mix(in srgb, var(--accent) 24%, transparent); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -607,7 +606,6 @@ body.is-mini .lim-nums { flex: none; min-width: 8.5ch; justify-content: flex-end
 /* ---------------------------------------------------------------- no access */
 
 body.locked .controls,
-body.locked .tabs,
 body.locked .notice,
 body.locked .layout,
 body.locked .mini { display: none !important; }
@@ -661,7 +659,6 @@ body.is-mini .locked-card p { font-size: 12.5px; }
 
 body.is-mini { background: var(--surface); }
 body.is-mini .top,
-body.is-mini .tabs,
 body.is-mini .notice,
 body.is-mini .layout { display: none !important; }
 body.is-mini .mini { display: flex; flex-direction: column; min-height: calc(100vh - var(--lim, 0px)); }
@@ -729,6 +726,9 @@ body.is-mini .settings-panel {
   border-radius: 0;
   box-shadow: none;
 }
+/* Only the settings scroll then, not the page under them too (see lockPage). */
+html:has(body.settings-open) { overflow: hidden; }
+body.settings-open .mini-head { padding-right: calc(8px + var(--sb, 0px)); }
 #settings-button[aria-expanded="true"] { color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: var(--accent-soft); }
 #settings-button .icon-close { display: none; }
 body.is-mini #settings-button[aria-expanded="true"] .icon-open { display: none; }
@@ -766,7 +766,10 @@ body.is-mini #settings-button[aria-expanded="true"] .icon-close { display: block
 .mini-list:not([hidden]) + .mini-label { margin-top: 20px; }
 .mfolder:hover { color: var(--text); background: var(--surface-2); }
 .mfolder:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.mfolder .chev { width: 12px; height: 12px; }
+.mfolder .chev { flex: none; width: 12px; height: 12px; transition: transform .15s; }
+.mfolder[aria-expanded="false"] .chev { transform: rotate(-90deg); }
+.mfolder .fname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mfolder.hot .count { background: var(--accent); color: var(--on-accent); }
 .mfolder .count { min-width: 18px; height: 18px; padding: 0 5px; font-size: 11px; }
 .mfolder .fsum { margin-left: auto; padding-left: 6px; font-size: 11.5px; font-weight: 500; color: var(--faint); white-space: nowrap; }
 
@@ -850,38 +853,50 @@ body.is-mini #settings-button[aria-expanded="true"] .icon-close { display: block
 
 /* ---------------------------------------------------------------- narrow */
 
+@media (max-width: 1100px) {
+  .layout { grid-template-columns: 320px minmax(0, 1fr); }
+  .d-scroll { padding: 22px 24px 30px; }
+  .d-bar { padding: 10px 24px; }
+}
+
 @media (max-width: 900px) {
   .top { padding: 12px 16px; }
-  .layout { grid-template-columns: 1fr; padding: 12px 16px 40px; }
-  .questions { position: static; max-height: none; }
-  .tabs {
-    display: flex;
-    gap: 6px;
-    padding: 12px 16px 0;
-  }
-  .tabs button {
-    flex: 1;
-    display: inline-flex;
-    justify-content: center;
-    align-items: center;
-    gap: 8px;
-    min-height: 42px;
-    border-radius: 10px;
-    border: 1px solid var(--line);
-    background: var(--surface);
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .tabs button.active { background: var(--accent); border-color: transparent; color: var(--on-accent); box-shadow: inset 0 -3px 0 var(--brand-edge); }
-  .tabs button.active .count { background: color-mix(in srgb, var(--on-accent) 22%, transparent); color: var(--on-accent); }
-  body[data-tab="questions"] .flows,
-  body[data-tab="flows"] .questions { display: none; }
-  .grid { grid-template-columns: 1fr; }
   .notice { margin: 12px 16px 0; }
 }
 
+/* Too narrow for both, which only happens when the full view is asked for in
+   a mini-sized window (?full): the list, and a picked session over it with a
+   way back. */
+@media (max-width: 759px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .side { border-right: 0; }
+  .detail { display: none; }
+  body.show-detail .side { display: none; }
+  body.show-detail .detail { display: flex; }
+  .d-scroll { padding: 14px 16px 24px; }
+  .d-bar { padding: 10px 16px; }
+  .d-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0 0 14px -6px;
+    padding: 6px 10px 6px 6px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: var(--accent-text);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .d-back:hover { background: var(--accent-soft); }
+  .d-back svg { width: 16px; height: 16px; }
+  .d-title { font-size: 22px; }
+  .msg { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+}
+
 /* Icon-only buttons before the controls would need two rows of their own. */
-@media (max-width: 760px) {
+@media (max-width: 899px) {
   .controls .bell { width: 40px; padding: 0; justify-content: center; }
   .controls .bell span { display: none; }
 }

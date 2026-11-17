@@ -70,33 +70,31 @@
     </label>
   </section>
 
-  <nav class="tabs" aria-label="Weergave">
-    <button type="button" data-tab="questions" class="active">Vragen <span class="count" data-count="questions">0</span></button>
-    <button type="button" data-tab="flows">Flows <span class="count" data-count="flows">0</span></button>
-  </nav>
-
   <div class="notice" id="notice" hidden></div>
 
+  <!-- Full view: every session by status on the left, the one you pick in
+       full on the right. -->
   <main class="layout">
-    <section class="panel questions" id="questions" aria-labelledby="q-title">
-      <div class="panel-head">
-        <h2 id="q-title">Vragen voor jou</h2>
-        <span class="count big" data-count="questions">0</span>
-      </div>
-      <div class="list" id="question-list"></div>
-    </section>
-
-    <section class="panel flows" id="flows" aria-labelledby="f-title">
-      <div class="panel-head">
-        <h2 id="f-title">Flows</h2>
-        <span class="sub" id="flows-sub"></span>
-      </div>
-      <div class="grid" id="flow-grid"></div>
+    <nav class="side" aria-label="Sessies">
+      <div class="side-list" id="side-list"></div>
       <div class="empty" id="flow-empty" hidden>
         <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M8 30c5-14 10-14 16 0s11 14 16 0" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
         <strong>Rustig</strong>
         <span>Geen sessies in deze periode.</span>
       </div>
+    </nav>
+    <section class="detail" id="detail" aria-label="Sessie">
+      <div class="d-scroll" id="d-scroll">
+        <div class="d-wrap">
+          <!-- Only in a narrow window, where the list and a session take turns. -->
+          <button type="button" class="d-back" id="d-back">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Alle sessies
+          </button>
+          <div id="d-body"></div>
+        </div>
+      </div>
+      <div class="d-bar"><div class="d-wrap" id="d-actions"></div></div>
     </section>
   </main>
 
