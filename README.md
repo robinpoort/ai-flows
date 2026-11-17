@@ -106,6 +106,7 @@ path.
 | `~/.codex/hooks.json` | Writes (if `~/.codex` exists): the same, for Codex's permission and turn events |
 | `~/.codex/state_*.sqlite`, `~/.codex/sessions/` | Reads (read-only): Codex's thread list and the tail of recent rollout files (also for its limits) |
 | macOS keychain, item `Claude Code-credentials` | Reads, while **Limieten → Claude** is on (the default): Claude Code's login, to fetch your 5-hour and weekly limits (see [Limits](#limits)) |
+| `claude` (Claude Code's command) | Runs, while **Limieten → Claude** is on and that login has expired: `claude -p /usage`, at most every 15 minutes, so Claude Code renews it (see Security) |
 | `~/.claude/ai-flows/` | Writes: `app/` (server, page, helper), `hook.sh`, daily event logs (7 days kept), `settings.json`, `token`, `marks.json`, one-time `claim` codes, `notify/` payloads |
 | `~/.claude/projects/*/*.jsonl` | Reads: the tail of recent transcripts |
 | `~/Library/Application Support/Claude/claude-code-sessions/` | Reads: the desktop app's session titles and ids |
@@ -193,10 +194,19 @@ Claude Code's login from the keychain (`/usr/bin/security`, item
 `Claude Code-credentials`) every few minutes while a dashboard is open, and
 sends only its access token, only to `https://api.anthropic.com/api/oauth/usage`.
 The token is not stored, logged or passed to the page, which gets percentages
-and reset times only. The server never refreshes the login, as that would
-replace the one Claude Code holds: an expired login shows "niet beschikbaar"
-until Claude Code renews it. With the setting off the keychain is not read,
-and without a Claude Code login the Claude meter is left out.
+and reset times only. The server never refreshes the login itself: that hands
+out a new refresh token and voids the old one, which could sign Claude Code
+out. The Claude app keeps a login of its own and lets this one expire, so when
+it has, the server has Claude Code renew it: it runs `claude -p /usage` (found
+in `~/.local/bin`, `~/.claude/local`, `/opt/homebrew/bin` or `/usr/local/bin`),
+at most every 15 minutes while a dashboard is open, with a bare environment,
+hooks, the session log and memory off, and without reading its output (it names
+the account). `/usage` runs in Claude Code itself; it asks the model nothing.
+Meanwhile the bar says "login vernieuwen…". Still expired after that means the
+sign-in itself has ended: the bar says "opnieuw inloggen", which takes
+`claude auth login` in a terminal. With the setting off the keychain is not
+read and nothing is run, and without a Claude Code login the Claude meter is
+left out.
 
 **Not covered.**
 - A program running as you can read the key, just as it can read `~/.claude`
@@ -392,7 +402,8 @@ settings and its own key), and `AI_FLOWS_DRY_OPEN=1` logs sessions it would
 open and notifications it would send instead of doing it.
 `AI_FLOWS_CODEX_HOME=…` reads Codex threads from another folder than `~/.codex`, and
 `AI_FLOWS_CLAUDE_USAGE=<file>` reads a usage response from a file instead of the
-keychain and the network. To feed it test
+keychain and the network (`{"error": "expired"}` stands for an expired login),
+and `AI_FLOWS_CLAUDE_BIN=<file>` is run in place of `claude` to renew it. To feed it test
 events, pipe JSON into `./hook.sh <folder>` (`./hook.sh <folder> codex` for a Codex event). API calls need the key as
 `X-AI-Flows-Token` (or `?t=` for the stream). `?snapshot` loads the state once
 instead of streaming it, for headless screenshots. Changes in the checkout

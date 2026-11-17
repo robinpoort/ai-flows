@@ -775,11 +775,18 @@
   // it says "Limiet" instead of the tool's name. Reset times and how old the
   // numbers are sit in the tooltip.
   const limitsEl = $('#limits');
+  // No numbers: what the bar says, and on hover why and what helps. An
+  // expired login is renewed by itself; only an ended sign-in needs you.
   const LIMIT_PROBLEM = {
-    expired: 'login verlopen; die wordt vernieuwd zodra je Claude gebruikt',
-    offline: 'niet bereikbaar',
-    unknown: 'onbekend antwoord',
+    renewing: ['login vernieuwen…', 'De login van Claude Code was verlopen en wordt nu vernieuwd.'],
+    signin: ['opnieuw inloggen', 'Je inlog bij Claude Code is afgelopen. Log opnieuw in met claude auth login in de terminal.'],
+    expired: ['login verlopen', 'De login van Claude Code is verlopen. Start claude in de terminal om hem te vernieuwen.'],
+    offline: ['niet bereikbaar', 'De limieten zijn nu niet op te halen. Het wordt zo opnieuw geprobeerd.'],
+    unknown: ['niet beschikbaar', 'Het antwoord met de limieten werd niet herkend.'],
   };
+  const limitProblem = (t) => (t.error === 'expired'
+    ? (t.renew === 'busy' ? 'renewing' : t.renew === 'failed' ? 'signin' : 'expired')
+    : t.error);
 
   function limitLabel(key) {
     if (key === '5h') return '5 uur';
@@ -800,8 +807,11 @@
 
   function limitTool(t, label) {
     if (!t.windows.length) {
-      const why = `${t.name}: ${LIMIT_PROBLEM[t.error] || 'niet beschikbaar'}`;
-      return `<div class="lim-tool off" role="img" aria-label="${esc(why)}" title="${esc(why)}"><span class="lim-name">${esc(label)}</span><span class="lim-off">niet beschikbaar</span></div>`;
+      const kind = limitProblem(t);
+      const [short, long] = LIMIT_PROBLEM[kind] || ['niet beschikbaar', 'Nog geen cijfers.'];
+      const why = `${t.name}: ${long}`;
+      // Named after its tool here, so it is clear whose login it is.
+      return `<div class="lim-tool off" role="img" aria-label="${esc(why)}" title="${esc(why)}"><span class="lim-name">${esc(t.name)}</span><span class="lim-off ${kind || ''}">${esc(short)}</span></div>`;
     }
     const wins = t.windows.map((w) => ({ ...w, pct: Math.round(w.pct) }));
     const lines = wins.map((w) => `${limitLabel(w.key)}: ${w.pct}% gebruikt${w.resetsAt ? `, ${resetText(w.resetsAt)}` : ''}`);

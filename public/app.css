@@ -578,6 +578,7 @@ body { padding-bottom: var(--lim, 0px); }
 .lim-pct.warn { font-weight: 650; color: var(--amber); }
 .lim-pct.high { font-weight: 650; color: var(--red); }
 .lim-off { color: var(--faint); }
+.lim-off.signin { color: var(--amber); }
 
 /* Mini view: side by side when both fit with a readable meter, otherwise one
    row each, names and numbers lined up. */

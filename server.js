@@ -986,9 +986,10 @@ function saveMarks() {
 // Claude: the endpoint behind Claude Code's /usage, with the login Claude Code
 // keeps in the macOS keychain. It is undocumented, so it may change or stop
 // working. The token is read fresh each time, sent only to api.anthropic.com,
-// and never stored or logged. It is never refreshed here either: that would
-// replace the login Claude Code holds. Once it expires we wait until Claude
-// Code renews it.
+// and never stored or logged. It is never refreshed here either: that hands
+// out a new refresh token and voids the old one, which could sign Claude Code
+// out. When it has expired, Claude Code renews it instead (see renewal below):
+// the Claude app keeps a login of its own and leaves this one to expire.
 //
 // Codex: every Codex turn writes its limits into the thread's rollout
 // (token_count events), so the newest rollout has the latest numbers.
@@ -998,11 +999,25 @@ const CLAUDE_KEYCHAIN = 'Claude Code-credentials';
 const CLAUDE_USAGE_EVERY = 3 * MINUTE;
 const CODEX_LIMITS_EVERY = 10 * 1000;
 // For tests only: a JSON file with an endpoint response, read in place of the
-// keychain and the network.
+// keychain and the network ({"error": "expired"} stands for an expired login).
 const CLAUDE_USAGE_FILE = process.env.AI_FLOWS_CLAUDE_USAGE || null;
+// Renewing an expired login: at most this often.
+const CLAUDE_RENEW_EVERY = 15 * MINUTE;
+// Where Claude Code's own command can be (the first one there is used). The
+// environment variable is for tests.
+const CLAUDE_BINS = [
+  process.env.AI_FLOWS_CLAUDE_BIN,
+  path.join(HOME, '.local', 'bin', 'claude'),
+  path.join(HOME, '.claude', 'local', 'claude'),
+  '/opt/homebrew/bin/claude',
+  '/usr/local/bin/claude',
+].filter(Boolean);
 
 const limitsCache = {
-  claude: { windows: null, at: 0, error: null, next: 0, busy: false },
+  // renew: 'busy' while Claude Code renews the login, 'failed' when the login
+  // is still expired after that (the sign-in itself has ended), 'nocli' when
+  // Claude Code is not found.
+  claude: { windows: null, at: 0, error: null, next: 0, busy: false, renew: null, renewAt: 0 },
   codex: { windows: null, at: 0, next: 0, file: null, size: -1 },
 };
 
@@ -1037,6 +1052,34 @@ function claudeToken(done) {
     });
 }
 
+// An expired login is renewed by Claude Code itself: its /usage command
+// renews it on the way, without a question to the model. Hooks and the
+// session log are off for that run, so no session shows up for it, and its
+// output (which names the account) is not read.
+function claudeBin() {
+  for (const p of CLAUDE_BINS) {
+    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch {}
+  }
+  return null;
+}
+
+function renewClaudeLogin(done) {
+  const c = limitsCache.claude;
+  c.renewAt = Date.now();
+  const bin = claudeBin();
+  if (!bin) { c.renew = 'nocli'; return done(); }
+  c.renew = 'busy';
+  setImmediate(pushStreams);
+  const child = execFile(bin, ['-p', '/usage', '--no-session-persistence', '--settings', JSON.stringify({ disableAllHooks: true, autoMemoryEnabled: false })], {
+    cwd: EVENTS_DIR,
+    timeout: 60000,
+    maxBuffer: 1024 * 1024,
+    env: { HOME, USER: process.env.USER || '', PATH: '/usr/bin:/bin:/usr/sbin:/sbin', TERM: 'dumb', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
+  }, () => { c.renew = null; done(); });
+  // Nothing comes in on stdin; without this it waits for it a few seconds.
+  if (child.stdin) child.stdin.end();
+}
+
 function refreshClaudeLimits() {
   const c = limitsCache.claude;
   const now = Date.now();
@@ -1045,24 +1088,42 @@ function refreshClaudeLimits() {
   const finish = (windows, error, wait) => {
     c.busy = false;
     c.next = Date.now() + wait;
-    if (windows) { c.windows = windows; c.at = Date.now(); }
+    if (windows) { c.windows = windows; c.at = Date.now(); c.renew = null; }
     c.error = error;
     setImmediate(pushStreams);
+  };
+  // Expired: have Claude Code renew it and look again, at most every 15
+  // minutes. Still expired right after that means the sign-in itself has
+  // ended, which only "claude auth login" fixes.
+  const expired = () => {
+    c.error = 'expired';
+    if (c.renew !== 'busy' && Date.now() - c.renewAt >= CLAUDE_RENEW_EVERY) {
+      return renewClaudeLogin(() => {
+        c.busy = false;
+        c.next = 0;
+        if (c.renew !== 'nocli') c.renew = 'checking';
+        refreshClaudeLimits();
+      });
+    }
+    if (c.renew === 'checking') c.renew = 'failed';
+    finish(null, 'expired', MINUTE);
   };
   if (CLAUDE_USAGE_FILE) {
     let body = null;
     try { body = JSON.parse(fs.readFileSync(CLAUDE_USAGE_FILE, 'utf8')); } catch {}
+    if (body && body.error === 'expired') return expired();
     return finish(claudeWindows(body), body ? null : 'offline', 2000);
   }
   claudeToken(async (token, problem) => {
-    // A missing or expired login is cheap to check again: no network.
+    if (problem === 'expired') return expired();
+    // A missing login is cheap to check again: no network.
     if (!token) return finish(null, problem, MINUTE);
     try {
       const r = await fetch(CLAUDE_USAGE_URL, {
         headers: { Authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20', Accept: 'application/json', 'User-Agent': 'ai-flows' },
         signal: AbortSignal.timeout(15000),
       });
-      if (r.status === 401 || r.status === 403) return finish(null, 'expired', MINUTE);
+      if (r.status === 401 || r.status === 403) return expired();
       if (r.status === 429) {
         const after = Number(r.headers.get('retry-after'));
         return finish(null, null, Math.max(CLAUDE_USAGE_EVERY, Math.min(Number.isFinite(after) ? after * 1000 : 0, HOUR)));
@@ -1158,7 +1219,10 @@ function limitsState(watching) {
   const now = Date.now();
   const out = [];
   const cl = limitsCache.claude;
-  if (on.claude && (cl.windows || (cl.error && cl.error !== 'login'))) out.push({ tool: 'claude', name: 'Claude', windows: cl.windows ? current(cl.windows, now) : [], at: cl.at, error: cl.error });
+  if (on.claude && (cl.windows || (cl.error && cl.error !== 'login'))) {
+    const renew = cl.renew === 'checking' ? 'busy' : cl.renew;
+    out.push({ tool: 'claude', name: 'Claude', windows: cl.windows ? current(cl.windows, now) : [], at: cl.at, error: cl.error, renew: cl.error === 'expired' ? renew || null : null });
+  }
   const cx = limitsCache.codex;
   if (on.codex && cx.windows) out.push({ tool: 'codex', name: 'Codex', windows: current(cx.windows, now), at: cx.at, error: null });
   return out;
