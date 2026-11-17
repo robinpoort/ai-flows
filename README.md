@@ -262,6 +262,9 @@ blue when it should not). Marks are kept in `~/.claude/ai-flows/marks.json`.
 **Folders and closing.** Every session names the folder it was started in
 (for the Claude app its `originCwd`; a worktree counts as its repository, and a
 session started from another one sits with that one, as in the app's sidebar).
+Such a sub-task sits right under the session it came from, one step in with a
+line from it, in the list and in the mini view; the open sub-task names that
+session, and a click on the name picks it.
 The mini view groups by it, A to Z; click a folder to fold it shut. A shut
 folder shows what it holds ("1 wacht · 2 bezig") and turns its count blue when
 something in it needs you. Folding is remembered per browser. **Sluit sessie**

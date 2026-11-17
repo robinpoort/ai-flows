@@ -255,6 +255,7 @@
     ).join('')}</div>`;
   }
 
+  const ICON_SUB = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v5.5a2.5 2.5 0 0 0 2.5 2.5H13M10.5 8 13 10.5 10.5 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const ICON_FOLDER = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>';
 
   // ---------------------------------------------------------------- full view
@@ -297,10 +298,10 @@
     return text.split('\n').find((l) => l.trim()) || prompt;
   }
 
-  function sideRow(s) {
+  function sideRow(s, tree = '') {
     const key = 's:' + s.id;
     const sel = s.id === selectedId;
-    const cls = (MINI_CLASS[s.status] || 'done') + (s.unread ? ' unread' : '') + (sel ? ' sel' : '');
+    const cls = (MINI_CLASS[s.status] || 'done') + (s.unread ? ' unread' : '') + (sel ? ' sel' : '') + tree;
     const when = (s.question && s.question.ts) || (s.status === 'working' ? s.since : s.lastTs);
     const app = appOf(s);
     const open = s.openUrl
@@ -328,7 +329,9 @@
   function renderSide(sessions, questions) {
     const groups = { you: questions, busy: [], done: [] };
     for (const s of sessions) if (!asks(s)) groups[sectionOf(s)].push(s);
-    const order = [...groups.you, ...groups.busy, ...groups.done];
+    const rows = {};
+    for (const sec of SECTIONS) rows[sec.key] = nest(groups[sec.key]);
+    const order = [...rows.you, ...rows.busy, ...rows.done].map((r) => r.s);
     // Keep the picked session; when it is gone, take the one now in its place.
     let i = order.findIndex((s) => s.id === selectedId);
     if (i < 0 && order.length) {
@@ -345,7 +348,7 @@
         key: 'h:' + sec.key,
         html: `<div class="shead ${sec.key}" data-key="h:${sec.key}">${sec.label}<span class="count">${list.length}</span></div>`,
       });
-      for (const s of list) items.push(sideRow(s));
+      for (const { s, tree } of rows[sec.key]) items.push(sideRow(s, tree));
     }
     renderList($('#side-list'), items);
     setHidden($('#flow-empty'), sessions.length > 0);
@@ -387,6 +390,10 @@
       </div>
       <h2 class="d-title">${esc(s.title)}</h2>
       <div class="d-path" title="${esc(s.cwd || '')}">${ICON_FOLDER}<span>${esc(s.project)}${s.cwd ? ` · ${esc(shortPath(s.cwd))}` : ''}</span></div>`);
+    const parent = s.parentLocalId && ((state && state.sessions) || []).find((x) => x.localId === s.parentLocalId && x.id !== s.id);
+    if (parent) {
+      out.push(`<div class="d-parent">${ICON_SUB}<span>Sub-taak van</span><button type="button" class="link" data-act="select" data-sid="${esc(parent.id)}">${esc(parent.title)}</button></div>`);
+    }
 
     if (asks(s)) out.push(questionBlock(s));
 
@@ -484,6 +491,45 @@
     return list.sort((a, b) => a.name.localeCompare(b.name, 'nl', { sensitivity: 'base', numeric: true }) || a.key.localeCompare(b.key));
   }
 
+  // Sub-tasks (a session started from another one) sit right under the
+  // session they came from, as in the Claude app's sidebar, with a line from
+  // it. Only within one list: a sub-task whose session is elsewhere (another
+  // status, or out of the period) keeps its own place. Deeper sub-tasks stay
+  // one step in, right after the one they came from, so the line runs on.
+  function nest(list) {
+    const byLocal = new Map();
+    for (const s of list) if (s.localId && !byLocal.has(s.localId)) byLocal.set(s.localId, s);
+    const kids = new Map();
+    const roots = [];
+    for (const s of list) {
+      const p = s.parentLocalId && s.parentLocalId !== s.localId ? byLocal.get(s.parentLocalId) : null;
+      if (p) {
+        if (!kids.has(p.id)) kids.set(p.id, []);
+        kids.get(p.id).push(s);
+      } else roots.push(s);
+    }
+    const out = [];
+    const seen = new Set();
+    const below = (s, into) => {
+      for (const k of kids.get(s.id) || []) {
+        if (seen.has(k.id)) continue;
+        seen.add(k.id);
+        into.push(k);
+        below(k, into);
+      }
+    };
+    for (const s of roots) {
+      seen.add(s.id);
+      const subs = [];
+      below(s, subs);
+      out.push({ s, tree: subs.length ? ' has-sub' : '' });
+      subs.forEach((k, i) => out.push({ s: k, tree: i === subs.length - 1 ? ' sub last' : ' sub' }));
+    }
+    // Sessions that only point at each other: keep them, as they are.
+    for (const s of list) if (!seen.has(s.id)) out.push({ s, tree: '' });
+    return out;
+  }
+
   const ICON_CHEVRON = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
   function folderSummary(items) {
@@ -508,7 +554,7 @@
         key,
         html: `<button type="button" class="${cls}${hot ? ' hot' : ''}" data-key="${esc(key)}" data-act="fold" data-fold="${esc(fold)}" aria-expanded="${open}" title="${esc(g.detail || g.name)}">${ICON_CHEVRON}<span class="fname">${esc(g.name)}</span><span class="count">${g.items.length}</span>${sum ? `<span class="fsum">${esc(sum)}</span>` : ''}</button>`,
       });
-      if (open) for (const s of g.items) out.push(card(s));
+      if (open) for (const { s, tree } of nest(g.items)) out.push(card(s, tree));
     }
     return out;
   }
@@ -537,9 +583,9 @@
   // Each mini row names its AI tool (Claude, Codex) when that setting is on.
   let miniTools = false;
 
-  function miniRow(s, withQuestion) {
+  function miniRow(s, withQuestion, tree = '') {
     const key = 'm:' + s.id;
-    const cls = (MINI_CLASS[s.status] || 'done') + (s.unread ? ' unread' : '') + (miniTools ? ' has-tool' : '');
+    const cls = (MINI_CLASS[s.status] || 'done') + (s.unread ? ' unread' : '') + (miniTools ? ' has-tool' : '') + tree;
     const st = STATUS[s.status] || STATUS.idle;
     let sub = '';
     if (withQuestion && s.question) {
@@ -567,8 +613,8 @@
     const qIds = new Set(questions.map((s) => s.id));
     const flows = sessions.filter((s) => !qIds.has(s.id));
 
-    renderList($('#mini-questions'), grouped('q', questions, (s) => miniRow(s, true), 'mfolder'));
-    renderList($('#mini-flows'), grouped('f', flows, (s) => miniRow(s, false), 'mfolder'));
+    renderList($('#mini-questions'), grouped('q', questions, (s, tree) => miniRow(s, true, tree), 'mfolder'));
+    renderList($('#mini-flows'), grouped('f', flows, (s, tree) => miniRow(s, false, tree), 'mfolder'));
     // No open questions: leave that whole part out.
     setHidden($('#mini-q-label'), questions.length === 0);
     setHidden($('#mini-questions'), questions.length === 0);
@@ -1051,6 +1097,11 @@
       toggleFolder(el.dataset.fold);
     } else if (act === 'select') {
       select(el.dataset.sid, true);
+      // From the open session's "Sub-taak van" line: bring that row in view.
+      if (el.closest('#detail')) {
+        const row = document.querySelector(`#side-list [data-key="s:${CSS.escape(el.dataset.sid)}"]`);
+        if (row) row.scrollIntoView({ block: 'nearest' });
+      }
     } else if (act === 'mark') {
       const s = find(el.dataset.sid);
       if (s) markSession(s, needsReading(s) ? 'read' : 'unread');

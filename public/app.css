@@ -9,6 +9,7 @@
   --muted: #575d80;         /* --sp-fg-muted */
   --faint: #767c9b;
   --line: #e0e5f2;          /* --sp-line */
+  --tree: #c3c8da;          /* line from a session to its sub-tasks */
   --accent: #0042ff;        /* --sp-brand */
   --on-accent: #ffffff;     /* --sp-on-brand */
   --accent-soft: #eaf1fe;   /* --sp-info-bg */
@@ -39,6 +40,7 @@
     --muted: #979ebb;
     --faint: #7c83a1;
     --line: #2f3444;
+    --tree: #464c61;
     --accent: #599ff3;
     --on-accent: #0b0f1a;
     --accent-soft: rgb(89 159 243 / .14);
@@ -250,6 +252,32 @@ body.no-sessions .side { display: grid; place-items: center; border-right: 0; ba
   cursor: pointer;
 }
 .srow-main:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* A sub-task sits one step in under the session it came from, with a line
+   from that one's dot, as in the Claude app's sidebar. The line runs on past
+   a sub-task when another one follows. */
+.srow.has-sub { position: relative; }
+.srow.has-sub::after {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 27px;
+  bottom: -2px;
+  border-left: 1.5px solid var(--tree);
+  pointer-events: none;
+}
+.srow.sub { position: relative; margin-left: 20px; }
+.srow.sub::before,
+.srow.sub:not(.last)::after {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 0;
+  border-left: 1.5px solid var(--tree);
+  pointer-events: none;
+}
+.srow.sub::before { width: 14px; height: 19px; border-bottom: 1.5px solid var(--tree); border-bottom-left-radius: 7px; }
+.srow.sub:not(.last)::after { bottom: -2px; }
 .sdot { width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--faint); justify-self: center; }
 .stitle { font-size: 14px; font-weight: 600; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .srow-main .time { font-size: 12px; line-height: 20px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -309,6 +337,24 @@ body.no-sessions .side { display: grid; place-items: center; border-right: 0; ba
 .d-path { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: 14px; }
 .d-path svg { width: 15px; height: 15px; flex: none; }
 .d-path span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.d-parent { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: 4px; color: var(--muted); font-size: 14px; }
+.d-parent svg { width: 15px; height: 15px; flex: none; }
+.d-parent span { flex: none; }
+.d-parent .link {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.d-parent .link:hover { text-decoration: underline; }
+.d-parent .link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
 
 .d-card { margin-top: 22px; padding: 18px 20px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); }
 .d-card.ask { background: var(--q-panel); border-color: color-mix(in srgb, var(--accent) 22%, var(--line)); }
@@ -791,6 +837,28 @@ body.is-mini #settings-button[aria-expanded="true"] .icon-close { display: block
   font: inherit;
 }
 .mrow:hover { background: var(--surface-2); }
+.mrow.has-sub { position: relative; }
+.mrow.has-sub::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  top: calc(50% + 7px);
+  bottom: -3px;
+  border-left: 1.5px solid var(--tree);
+  pointer-events: none;
+}
+.mrow.sub { position: relative; width: calc(100% - 18px); margin-left: 18px; }
+.mrow.sub::before,
+.mrow.sub:not(.last)::after {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 0;
+  border-left: 1.5px solid var(--tree);
+  pointer-events: none;
+}
+.mrow.sub::before { width: 11px; height: 50%; border-bottom: 1.5px solid var(--tree); border-bottom-left-radius: 6px; }
+.mrow.sub:not(.last)::after { bottom: -3px; }
 .mrow:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .mrow .mdot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); justify-self: center; }
 .mrow .mmain { min-width: 0; display: flex; flex-direction: column; }

@@ -1302,6 +1302,9 @@ function buildSession(sid) {
     tool: 'claude',
     toolName: 'Claude',
     localId: desk ? desk.localId : null,
+    // Started from another session (a side task in the Claude app): shown
+    // under that one, as in the app's sidebar.
+    parentLocalId: (desk && desk.parentLocalId) || null,
     openUrl: desk ? `claude://code/continue?session=${encodeURIComponent(desk.localId)}&source=ai-flows` : null,
     // Quoting stops the shell, not the terminal: control characters in a folder
     // name (an escape that ends a bracketed paste, say) could still act when
