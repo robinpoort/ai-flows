@@ -264,7 +264,11 @@ blue when it should not). Marks are kept in `~/.claude/ai-flows/marks.json`.
 session started from another one sits with that one, as in the app's sidebar).
 Such a sub-task sits right under the session it came from, one step in with a
 line from it, in the list and in the mini view; the open sub-task names that
-session, and a click on the name picks it.
+session, and a click on the name picks it. The arrow after that session's title
+folds its sub-tasks into one line ("4 sub-taken · 1 nieuw", blue when one needs
+you) that unfolds them again; the left and right arrow keys do the same. This is
+remembered per browser. A sub-task in another group than its session (still
+busy while that one is done, say) names it on its row.
 The mini view groups by it, A to Z; click a folder to fold it shut. A shut
 folder shows what it holds ("1 wacht · 2 bezig") and turns its count blue when
 something in it needs you. Folding is remembered per browser. **Sluit sessie**

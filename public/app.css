@@ -278,6 +278,26 @@ body.no-sessions .side { display: grid; place-items: center; border-right: 0; ba
 }
 .srow.sub::before { width: 14px; height: 19px; border-bottom: 1.5px solid var(--tree); border-bottom-left-radius: 7px; }
 .srow.sub:not(.last)::after { bottom: -2px; }
+.stitle-line { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.stitle-line .stitle { min-width: 0; }
+
+/* Folded: one line under the session instead of its sub-tasks. */
+.srow.subsum {
+  width: calc(100% - 20px);
+  gap: .3em;
+  padding: 7px 10px 7px 12px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  text-align: left;
+  cursor: pointer;
+}
+.srow.subsum::before { height: 16px; }
+.srow.subsum:hover { color: var(--text); }
+.srow.subsum:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .sdot { width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--faint); justify-self: center; }
 .stitle { font-size: 14px; font-weight: 600; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .srow-main .time { font-size: 12px; line-height: 20px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -859,6 +879,30 @@ body.is-mini #settings-button[aria-expanded="true"] .icon-close { display: block
 }
 .mrow.sub::before { width: 11px; height: 50%; border-bottom: 1.5px solid var(--tree); border-bottom-left-radius: 6px; }
 .mrow.sub:not(.last)::after { bottom: -3px; }
+.mrow .mhead { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.mrow .mhead .mtitle { min-width: 0; }
+.mrow.subsum { display: flex; gap: .3em; min-height: 28px; padding: 4px 8px 4px 9px; font-size: 12.5px; color: var(--muted); }
+.mrow.subsum:hover { color: var(--text); }
+
+/* The arrow after the title of a session with sub-tasks, and the summary
+   line it leaves when they are folded away (blue when one needs you). */
+.subchev {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin: -2px 0;
+  border-radius: 5px;
+  color: var(--faint);
+  cursor: pointer;
+}
+.subchev .chev { width: 12px; height: 12px; transform: rotate(-90deg); transition: transform .15s; }
+.subchev.open .chev { transform: none; }
+.subchev:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.subsum .subn { flex: none; font-weight: 500; }
+.subsum .subsum-what { min-width: 0; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.subsum.hot .subsum-what { color: var(--accent-text); }
 .mrow:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .mrow .mdot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); justify-self: center; }
 .mrow .mmain { min-width: 0; display: flex; flex-direction: column; }

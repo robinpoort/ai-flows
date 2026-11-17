@@ -272,6 +272,9 @@
   const sectionOf = (s) => (asks(s) ? 'you' : s.status === 'working' || s.status === 'stale' ? 'busy' : 'done');
   const folderName = (s) => (s.folder && s.folder.name) || s.project || '';
 
+  // The session a sub-task came from, when it is in the list.
+  const parentOf = (s) => (s.parentLocalId && ((state && state.sessions) || []).find((x) => x.localId === s.parentLocalId && x.id !== s.id)) || null;
+
   // The picked session is kept per tab, across reloads.
   const picked = {
     get() { try { return sessionStorage.getItem('ai-flows:selected'); } catch { return null; } },
@@ -298,12 +301,13 @@
     return text.split('\n').find((l) => l.trim()) || prompt;
   }
 
-  function sideRow(s, tree = '') {
+  function sideRow(s, r = {}) {
     const key = 's:' + s.id;
     const sel = s.id === selectedId;
-    const cls = (MINI_CLASS[s.status] || 'done') + (s.unread ? ' unread' : '') + (sel ? ' sel' : '') + tree;
+    const cls = (MINI_CLASS[s.status] || 'done') + (s.unread ? ' unread' : '') + (sel ? ' sel' : '') + (r.tree || '');
     const when = (s.question && s.question.ts) || (s.status === 'working' ? s.since : s.lastTs);
     const app = appOf(s);
+    const from = !(r.tree || '').split(' ').includes('sub') && parentOf(s);
     const open = s.openUrl
       ? `<a class="srow-open" href="${esc(s.openUrl)}" data-act="open" data-sid="${esc(s.id)}" title="Open in ${esc(app)}" aria-label="${esc(`Open ${s.title} in ${app}`)}">${ICON_OPEN}</a>`
       : s.resumeCmd
@@ -314,12 +318,12 @@
       key,
       html: `
       <div class="srow ${cls}" data-key="${esc(key)}">
-        <button type="button" class="srow-main" data-act="select" data-sid="${esc(s.id)}" aria-current="${sel}">
+        <button type="button" class="srow-main" data-act="select" data-sid="${esc(s.id)}" aria-current="${sel}"${subsAttr(r)}>
           <span class="sdot"></span>
-          <span class="stitle">${esc(s.title)}</span>
+          <span class="stitle-line"><span class="stitle">${esc(s.title)}</span>${subToggle(r)}</span>
           ${timeEl(when, 'compact')}
           <span class="sline">${esc(rowLine(s))}</span>
-          <span class="smeta">${esc(folderName(s))} · ${esc(s.app)}</span>
+          <span class="smeta">${esc(folderName(s))} · ${esc(s.app)}${from ? ` · sub-taak van ${esc(from.title)}` : ''}</span>
         </button>
         ${open}
       </div>`,
@@ -330,8 +334,17 @@
     const groups = { you: questions, busy: [], done: [] };
     for (const s of sessions) if (!asks(s)) groups[sectionOf(s)].push(s);
     const rows = {};
-    for (const sec of SECTIONS) rows[sec.key] = nest(groups[sec.key]);
-    const order = [...rows.you, ...rows.busy, ...rows.done].map((r) => r.s);
+    const folded = new Map();
+    for (const sec of SECTIONS) {
+      rows[sec.key] = nest(groups[sec.key]);
+      for (const r of rows[sec.key]) if (r.sum) for (const k of r.subs) folded.set(k.id, r.sum.id);
+    }
+    // A folded sub-task cannot stay picked: its session takes its place.
+    if (folded.has(selectedId)) {
+      selectedId = folded.get(selectedId);
+      picked.set(selectedId);
+    }
+    const order = [...rows.you, ...rows.busy, ...rows.done].filter((r) => r.s).map((r) => r.s);
     // Keep the picked session; when it is gone, take the one now in its place.
     let i = order.findIndex((s) => s.id === selectedId);
     if (i < 0 && order.length) {
@@ -348,7 +361,7 @@
         key: 'h:' + sec.key,
         html: `<div class="shead ${sec.key}" data-key="h:${sec.key}">${sec.label}<span class="count">${list.length}</span></div>`,
       });
-      for (const { s, tree } of rows[sec.key]) items.push(sideRow(s, tree));
+      for (const r of rows[sec.key]) items.push(r.sum ? subSummary(r, 'srow') : sideRow(r.s, r));
     }
     renderList($('#side-list'), items);
     setHidden($('#flow-empty'), sessions.length > 0);
@@ -390,7 +403,7 @@
       </div>
       <h2 class="d-title">${esc(s.title)}</h2>
       <div class="d-path" title="${esc(s.cwd || '')}">${ICON_FOLDER}<span>${esc(s.project)}${s.cwd ? ` · ${esc(shortPath(s.cwd))}` : ''}</span></div>`);
-    const parent = s.parentLocalId && ((state && state.sessions) || []).find((x) => x.localId === s.parentLocalId && x.id !== s.id);
+    const parent = parentOf(s);
     if (parent) {
       out.push(`<div class="d-parent">${ICON_SUB}<span>Sub-taak van</span><button type="button" class="link" data-act="select" data-sid="${esc(parent.id)}">${esc(parent.title)}</button></div>`);
     }
@@ -496,6 +509,8 @@
   // it. Only within one list: a sub-task whose session is elsewhere (another
   // status, or out of the period) keeps its own place. Deeper sub-tasks stay
   // one step in, right after the one they came from, so the line runs on.
+  // Folded, they make way for one line that says how many there are and what
+  // they hold, as in the app; that is remembered per browser, like folders.
   function nest(list) {
     const byLocal = new Map();
     for (const s of list) if (s.localId && !byLocal.has(s.localId)) byLocal.set(s.localId, s);
@@ -522,8 +537,11 @@
       seen.add(s.id);
       const subs = [];
       below(s, subs);
-      out.push({ s, tree: subs.length ? ' has-sub' : '' });
-      subs.forEach((k, i) => out.push({ s: k, tree: i === subs.length - 1 ? ' sub last' : ' sub' }));
+      if (!subs.length) { out.push({ s, tree: '' }); continue; }
+      const open = !collapsed.has('sub:' + s.id);
+      out.push({ s, tree: ' has-sub', subs, open });
+      if (open) subs.forEach((k, i) => out.push({ s: k, tree: i === subs.length - 1 ? ' sub last' : ' sub' }));
+      else out.push({ sum: s, subs });
     }
     // Sessions that only point at each other: keep them, as they are.
     for (const s of list) if (!seen.has(s.id)) out.push({ s, tree: '' });
@@ -531,6 +549,35 @@
   }
 
   const ICON_CHEVRON = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  // The arrow after the title of a session with sub-tasks: folds them away.
+  // The row itself stays a link to the session; the arrow is for the mouse,
+  // the arrow keys (left folds, right unfolds) and the summary line for the
+  // keyboard.
+  const subsAttr = (r) => (r.subs ? ` data-subs="${esc(r.s.id)}" aria-expanded="${r.open}"` : '');
+  const subToggle = (r) => (r.subs
+    ? `<span class="subchev${r.open ? ' open' : ''}" data-act="subfold" data-sub="${esc(r.s.id)}" title="${r.open ? 'Sub-taken inklappen' : 'Sub-taken tonen'}">${ICON_CHEVRON}</span>`
+    : '');
+
+  // The line a folded session shows instead of its sub-tasks. Blue when one
+  // of them needs you, as a folded folder does.
+  function subSummary(r, cls) {
+    const n = r.subs.length;
+    const sum = folderSummary(r.subs);
+    const hot = r.subs.some(needsReading);
+    const key = 'x:' + r.sum.id;
+    return {
+      key,
+      html: `<button type="button" class="${cls} sub last subsum${hot ? ' hot' : ''}" data-key="${esc(key)}" data-act="subfold" data-sub="${esc(r.sum.id)}" aria-expanded="false"><span class="subn">${n} ${n === 1 ? 'sub-taak' : 'sub-taken'}</span>${sum ? `<span class="subsum-what">· ${esc(sum)}</span>` : ''}</button>`,
+    };
+  }
+
+  function toggleSub(id) {
+    const k = 'sub:' + id;
+    if (collapsed.has(k)) collapsed.delete(k); else collapsed.add(k);
+    store.set('collapsed', [...collapsed].slice(-120));
+    render();
+  }
 
   function folderSummary(items) {
     const waiting = items.filter((s) => s.status === 'question' || s.status === 'permission').length;
@@ -554,14 +601,14 @@
         key,
         html: `<button type="button" class="${cls}${hot ? ' hot' : ''}" data-key="${esc(key)}" data-act="fold" data-fold="${esc(fold)}" aria-expanded="${open}" title="${esc(g.detail || g.name)}">${ICON_CHEVRON}<span class="fname">${esc(g.name)}</span><span class="count">${g.items.length}</span>${sum ? `<span class="fsum">${esc(sum)}</span>` : ''}</button>`,
       });
-      if (open) for (const { s, tree } of nest(g.items)) out.push(card(s, tree));
+      if (open) for (const r of nest(g.items)) out.push(r.sum ? subSummary(r, 'mrow') : card(r.s, r));
     }
     return out;
   }
 
   function toggleFolder(fold) {
     if (collapsed.has(fold)) collapsed.delete(fold); else collapsed.add(fold);
-    store.set('collapsed', [...collapsed].slice(-60));
+    store.set('collapsed', [...collapsed].slice(-120));
     render();
   }
 
@@ -583,9 +630,9 @@
   // Each mini row names its AI tool (Claude, Codex) when that setting is on.
   let miniTools = false;
 
-  function miniRow(s, withQuestion, tree = '') {
+  function miniRow(s, withQuestion, r = {}) {
     const key = 'm:' + s.id;
-    const cls = (MINI_CLASS[s.status] || 'done') + (s.unread ? ' unread' : '') + (miniTools ? ' has-tool' : '') + tree;
+    const cls = (MINI_CLASS[s.status] || 'done') + (s.unread ? ' unread' : '') + (miniTools ? ' has-tool' : '') + (r.tree || '');
     const st = STATUS[s.status] || STATUS.idle;
     let sub = '';
     if (withQuestion && s.question) {
@@ -598,12 +645,12 @@
     const tip = [s.title, s.project, s.app, s.unread ? 'nog niet bekeken' : st.label, s.question && s.question.text].filter(Boolean).join(' · ');
     const inner = `
       <span class="mdot"></span>
-      <span class="mmain"><span class="mtitle">${esc(s.title)}</span>${sub ? `<span class="msub">${esc(sub)}</span>` : ''}</span>
+      <span class="mmain"><span class="mhead"><span class="mtitle">${esc(s.title)}</span>${subToggle(r)}</span>${sub ? `<span class="msub">${esc(sub)}</span>` : ''}</span>
       ${miniTools ? `<span class="mtool">${esc(appOf(s))}</span>` : ''}
       ${timeEl(when, 'compact')}`;
     const html = s.openUrl
-      ? `<a class="mrow ${cls}" data-key="${esc(key)}" href="${esc(s.openUrl)}" data-act="open" data-sid="${esc(s.id)}" title="${esc(tip)}">${inner}</a>`
-      : `<button type="button" class="mrow ${cls}" data-key="${esc(key)}" data-act="copy" data-text="${esc(s.resumeCmd || '')}" title="${esc(tip)} · klik om het resume-commando te kopiëren">${inner}</button>`;
+      ? `<a class="mrow ${cls}" data-key="${esc(key)}" href="${esc(s.openUrl)}" data-act="open" data-sid="${esc(s.id)}"${subsAttr(r)} title="${esc(tip)}">${inner}</a>`
+      : `<button type="button" class="mrow ${cls}" data-key="${esc(key)}" data-act="copy" data-text="${esc(s.resumeCmd || '')}"${subsAttr(r)} title="${esc(tip)} · klik om het resume-commando te kopiëren">${inner}</button>`;
     return { key, html };
   }
 
@@ -613,8 +660,8 @@
     const qIds = new Set(questions.map((s) => s.id));
     const flows = sessions.filter((s) => !qIds.has(s.id));
 
-    renderList($('#mini-questions'), grouped('q', questions, (s, tree) => miniRow(s, true, tree), 'mfolder'));
-    renderList($('#mini-flows'), grouped('f', flows, (s, tree) => miniRow(s, false, tree), 'mfolder'));
+    renderList($('#mini-questions'), grouped('q', questions, (s, r) => miniRow(s, true, r), 'mfolder'));
+    renderList($('#mini-flows'), grouped('f', flows, (s, r) => miniRow(s, false, r), 'mfolder'));
     // No open questions: leave that whole part out.
     setHidden($('#mini-q-label'), questions.length === 0);
     setHidden($('#mini-questions'), questions.length === 0);
@@ -664,6 +711,8 @@
   // Add, patch, reorder and remove cards so the list matches the new state.
   function renderList(container, items) {
     const existing = new Map($$(':scope > [data-key]', container).map((el) => [el.dataset.key, el]));
+    // Moving a row takes its focus away: give it back afterwards.
+    const focused = container.contains(document.activeElement) ? document.activeElement : null;
     let prev = null;
     for (const item of items) {
       let el = existing.get(item.key);
@@ -685,6 +734,7 @@
       el.remove();
       htmlCache.delete(container.id + '|' + key);
     }
+    if (focused && focused !== document.activeElement && container.contains(focused)) focused.focus({ preventScroll: true });
   }
 
   // ---------------------------------------------------------------- render
@@ -1095,6 +1145,16 @@
       toast('Gekopieerd. Plak in je terminal.');
     } else if (act === 'fold') {
       toggleFolder(el.dataset.fold);
+    } else if (act === 'subfold') {
+      e.preventDefault();
+      e.stopPropagation();
+      const list = el.closest('.mini-list, #side-list');
+      const fromSummary = el.classList.contains('subsum');
+      toggleSub(el.dataset.sub);
+      if (fromSummary && list) {
+        const row = list.querySelector(`[data-subs="${CSS.escape(el.dataset.sub)}"]`);
+        if (row) row.focus();
+      }
     } else if (act === 'select') {
       select(el.dataset.sid, true);
       // From the open session's "Sub-taak van" line: bring that row in view.
@@ -1109,6 +1169,17 @@
       const s = find(el.dataset.sid);
       if (s) markSession(s, 'closed');
     }
+  });
+
+  // Left folds a session's sub-tasks away, right shows them, as in a tree.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const el = document.activeElement;
+    if (!el || !el.dataset || !el.dataset.subs) return;
+    const open = el.getAttribute('aria-expanded') === 'true';
+    if (open !== (e.key === 'ArrowLeft')) return;
+    e.preventDefault();
+    toggleSub(el.dataset.subs);
   });
 
   // Up and down walk the list, picking each session on the way.
