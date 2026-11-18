@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="nl">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -19,61 +19,61 @@
       </span>
       <div>
         <h1>AI Flows</h1>
-        <p class="live" id="live"><span class="live-dot"></span><span id="live-text">Verbinden…</span></p>
+        <p class="live" id="live"><span class="live-dot"></span><span id="live-text">Connecting…</span></p>
       </div>
     </div>
 
     <div class="controls">
-      <div class="segmented" role="radiogroup" aria-label="Hoe ver terug" id="window">
-        <button type="button" role="radio" data-min="30" aria-label="30 minuten"><span class="long">30 min</span><span class="short" aria-hidden="true">30m</span></button>
-        <button type="button" role="radio" data-min="120" aria-label="2 uur"><span class="long">2 uur</span><span class="short" aria-hidden="true">2u</span></button>
-        <button type="button" role="radio" data-min="480" aria-label="8 uur"><span class="long">8 uur</span><span class="short" aria-hidden="true">8u</span></button>
-        <button type="button" role="radio" data-min="1440" aria-label="24 uur"><span class="long">24 uur</span><span class="short" aria-hidden="true">24u</span></button>
+      <div class="segmented" role="radiogroup" aria-label="How far back" id="window">
+        <button type="button" role="radio" data-min="30" aria-label="30 minutes"><span class="long">30 min</span><span class="short" aria-hidden="true">30m</span></button>
+        <button type="button" role="radio" data-min="120" aria-label="2 hours"><span class="long">2 hours</span><span class="short" aria-hidden="true">2h</span></button>
+        <button type="button" role="radio" data-min="480" aria-label="8 hours"><span class="long">8 hours</span><span class="short" aria-hidden="true">8h</span></button>
+        <button type="button" role="radio" data-min="1440" aria-label="24 hours"><span class="long">24 hours</span><span class="short" aria-hidden="true">24h</span></button>
       </div>
-      <button type="button" class="bell" id="open-mini" title="Mini-venster openen">
+      <button type="button" class="bell" id="open-mini" title="Open the mini window">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="11.5" y="11.5" width="6" height="5" rx="1.2" fill="currentColor"/></svg>
-        <span>Mini-venster</span>
+        <span>Mini window</span>
       </button>
-      <button type="button" class="bell" id="bell" aria-pressed="false" title="Melding bij een nieuwe vraag">
+      <button type="button" class="bell" id="bell" aria-pressed="false" title="Notify me of a new question">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15L6 16Z M10 20a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
-        <span id="bell-text">Meldingen uit</span>
+        <span id="bell-text">Notifications off</span>
       </button>
-      <button type="button" class="bell" id="settings-button" aria-haspopup="dialog" aria-expanded="false" aria-controls="settings-panel" title="Instellingen">
+      <button type="button" class="bell" id="settings-button" aria-haspopup="dialog" aria-expanded="false" aria-controls="settings-panel" title="Settings">
         <svg class="icon-open" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="10" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
         <!-- In the mini view the open settings are closed with this same button. -->
         <svg class="icon-close" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
-        <span>Instellingen</span>
+        <span>Settings</span>
       </button>
     </div>
   </header>
 
-  <section class="settings-panel" id="settings-panel" role="dialog" aria-label="Instellingen" hidden>
-    <h3 id="settings-title">Sessies openen</h3>
+  <section class="settings-panel" id="settings-panel" role="dialog" aria-label="Settings" hidden>
+    <h3 id="settings-title">Opening sessions</h3>
     <label class="choice">
       <input type="radio" name="open-via" value="server">
-      <span><strong>Zonder vraag</strong><small>Opent achter je huidige venster.</small></span>
+      <span><strong>Without asking</strong><small>Opens behind your current window.</small></span>
     </label>
     <label class="choice">
       <input type="radio" name="open-via" value="browser">
-      <span><strong>Via je browser</strong><small>Opent vooraan. Je browser vraagt soms om toestemming.</small></span>
+      <span><strong>Through your browser</strong><small>Opens in front. Your browser may ask for permission.</small></span>
     </label>
-    <h3 class="settings-section">Limieten</h3>
+    <h3 class="settings-section">Limits</h3>
     <label class="choice">
       <input type="checkbox" name="limit-claude">
-      <span><strong>Claude</strong><small>Via je Claude-login.</small></span>
+      <span><strong>Claude</strong><small>Through your Claude login.</small></span>
     </label>
     <label class="choice">
       <input type="checkbox" name="limit-codex">
-      <span><strong>Codex</strong><small>Uit je Codex-sessies.</small></span>
+      <span><strong>Codex</strong><small>From your Codex sessions.</small></span>
     </label>
-    <h3 class="settings-section">Weergave</h3>
+    <h3 class="settings-section">Display</h3>
     <label class="choice">
       <input type="checkbox" name="tool-labels">
-      <span><strong>Toon de AI-tool</strong><small>Claude of Codex per sessie.</small></span>
+      <span><strong>Show the AI tool</strong><small>Claude or Codex for each session.</small></span>
     </label>
     <label class="choice">
       <input type="checkbox" name="mini-on-top">
-      <span><strong>Mini-venster altijd bovenaan</strong><small>In Chrome en Edge. Uit: een gewoon venster.</small></span>
+      <span><strong>Mini window always on top</strong><small>In Chrome and Edge. Off: an ordinary window.</small></span>
     </label>
   </section>
 
@@ -82,21 +82,21 @@
   <!-- Full view: every session by status on the left, the one you pick in
        full on the right. -->
   <main class="layout">
-    <nav class="side" aria-label="Sessies">
+    <nav class="side" aria-label="Sessions">
       <div class="side-list" id="side-list"></div>
       <div class="empty" id="flow-empty" hidden>
         <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M8 30c5-14 10-14 16 0s11 14 16 0" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
-        <strong>Rustig</strong>
-        <span>Geen sessies in deze periode.</span>
+        <strong>All quiet</strong>
+        <span>No sessions in this period.</span>
       </div>
     </nav>
-    <section class="detail" id="detail" aria-label="Sessie">
+    <section class="detail" id="detail" aria-label="Session">
       <div class="d-scroll" id="d-scroll">
         <div class="d-wrap">
           <!-- Only in a narrow window, where the list and a session take turns. -->
           <button type="button" class="d-back" id="d-back">
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Alle sessies
+            All sessions
           </button>
           <div id="d-body"></div>
         </div>
@@ -108,9 +108,9 @@
   <section class="mini" id="mini" aria-label="AI Flows mini">
     <div class="mini-head">
       <span class="mini-logo" aria-hidden="true"><svg viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#0042FF"/><rect x="4" y="4" width="20" height="14" rx="2" fill="#5480FF"/><path d="M10 10h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H15l-4 4v-4h-1a2 2 0 0 1-2-2V12a2 2 0 0 1 2-2Z" fill="#FFFFFF"/><path d="M12.5 17c1.4-2.6 4.1-2.6 5.5 0s4.1 2.6 5.5 0" fill="none" stroke="#0042FF" stroke-width="2.5" stroke-linecap="round"/></svg></span>
-      <span class="mini-sum" id="mini-sum">Verbinden…</span>
-      <span class="mini-live" id="mini-live" title="Verbinding"></span>
-      <button type="button" class="mini-expand" id="mini-expand" title="Volledig dashboard openen" aria-label="Volledig dashboard openen">
+      <span class="mini-sum" id="mini-sum">Connecting…</span>
+      <span class="mini-live" id="mini-live" title="Connection"></span>
+      <button type="button" class="mini-expand" id="mini-expand" title="Open the full dashboard" aria-label="Open the full dashboard">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <!-- In mini mode the header's controls (period, notifications, settings) move here. -->
@@ -118,17 +118,17 @@
     </div>
     <!-- micro: the counters and the limits; a counter with one session opens it -->
     <div class="mini-micro">
-      <button type="button" class="micro q" data-micro="q"><span class="mi"><strong data-count="questions">0</strong><span class="what">vragen</span><span class="go"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 3h4v4M13 3 7.5 8.5M12 9.5V13H3V4h3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></button>
-      <button type="button" class="micro w" data-micro="w"><span class="mi"><strong data-count="working">0</strong><span class="what">bezig</span><span class="go"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 3h4v4M13 3 7.5 8.5M12 9.5V13H3V4h3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></button>
-      <button type="button" class="micro d" data-micro="d"><span class="mi"><strong data-count="done">0</strong><span class="what">klaar</span><span class="go"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 3h4v4M13 3 7.5 8.5M12 9.5V13H3V4h3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></button>
-      <div class="micro-lim" id="micro-lim" role="group" aria-label="Limieten" hidden></div>
+      <button type="button" class="micro q" data-micro="q"><span class="mi"><strong data-count="questions">0</strong><span class="what">questions</span><span class="go"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 3h4v4M13 3 7.5 8.5M12 9.5V13H3V4h3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></button>
+      <button type="button" class="micro w" data-micro="w"><span class="mi"><strong data-count="working">0</strong><span class="what">working</span><span class="go"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 3h4v4M13 3 7.5 8.5M12 9.5V13H3V4h3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></button>
+      <button type="button" class="micro d" data-micro="d"><span class="mi"><strong data-count="done">0</strong><span class="what">done</span><span class="go"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 3h4v4M13 3 7.5 8.5M12 9.5V13H3V4h3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></button>
+      <div class="micro-lim" id="micro-lim" role="group" aria-label="Limits" hidden></div>
     </div>
     <div class="mini-body">
-      <div class="mini-label" id="mini-q-label">Vragen</div>
+      <div class="mini-label" id="mini-q-label">Questions</div>
       <div class="mini-list" id="mini-questions"></div>
       <div class="mini-label" id="mini-f-label">Flows</div>
       <div class="mini-list" id="mini-flows"></div>
-      <div class="mini-none" id="mini-f-none">Niets actief</div>
+      <div class="mini-none" id="mini-f-none">Nothing active</div>
     </div>
   </section>
 
@@ -142,26 +142,26 @@
   <section class="locked" id="locked" hidden>
     <div class="locked-card">
       <svg viewBox="0 0 256 256" aria-hidden="true"><rect width="256" height="256" rx="48" fill="#0042FF"/><rect x="32" y="32" width="160" height="112" rx="16" fill="#5480FF"/><path d="M80 80h128a16 16 0 0 1 16 16v80a16 16 0 0 1-16 16H120l-32 32v-32h-8a16 16 0 0 1-16-16V96a16 16 0 0 1 16-16Z" fill="#FFFFFF"/><path d="M104 136c10-16 30-16 40 0s30 16 40 0" fill="none" stroke="#0042FF" stroke-width="16" stroke-linecap="round"/></svg>
-      <h2>Open AI Flows met je eigen link</h2>
-      <p>Draai in de map <code>ai-flows</code>:</p>
+      <h2>Open AI Flows with your own link</h2>
+      <p>In the <code>ai-flows</code> folder, run:</p>
       <pre><code>./open.sh</code></pre>
-      <p>Of plak de link van <code>./open.sh --copy</code>:</p>
+      <p>Or paste the link from <code>./open.sh --copy</code>:</p>
       <div class="unlock">
-        <input type="text" id="unlock-input" placeholder="Plak hier de link" autocomplete="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" aria-label="Link uit open.sh">
-        <button type="button" class="btn primary" id="unlock-button">Ontgrendel</button>
+        <input type="text" id="unlock-input" placeholder="Paste the link here" autocomplete="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" aria-label="Link from open.sh">
+        <button type="button" class="btn primary" id="unlock-button">Unlock</button>
       </div>
-      <p class="unlock-error" id="unlock-error" hidden>Link verlopen of onjuist.</p>
+      <p class="unlock-error" id="unlock-error" hidden>Link expired or wrong.</p>
     </div>
   </section>
 
   <div class="ctx" id="ctx" role="menu" aria-label="Flow" hidden>
     <button type="button" role="menuitem" data-ctx="open">Open in Claude</button>
-    <button type="button" role="menuitem" data-ctx="mark">Markeer als ongelezen</button>
+    <button type="button" role="menuitem" data-ctx="mark">Mark as unread</button>
     <div class="ctx-sep" role="separator"></div>
-    <button type="button" role="menuitem" data-ctx="close">Sluit sessie</button>
+    <button type="button" role="menuitem" data-ctx="close">Close session</button>
   </div>
 
-  <footer class="limits" id="limits" aria-label="Limieten" hidden></footer>
+  <footer class="limits" id="limits" aria-label="Limits" hidden></footer>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 

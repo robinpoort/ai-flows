@@ -119,16 +119,16 @@ for (const tool of [CLAUDE, CODEX]) {
   if (result === 'skipped') continue;
   if (remove) {
     console.log(result === 'changed'
-      ? `AI Flows-hooks verwijderd uit ${tool.file}.`
-      : `Er stonden geen AI Flows-hooks in ${tool.file}.`);
+      ? `AI Flows hooks removed from ${tool.file}.`
+      : `There were no AI Flows hooks in ${tool.file}.`);
   } else if (result === 'changed' || result === 'created') {
     console.log(result === 'created'
-      ? `AI Flows-hooks gezet in ${tool.file} (nieuw bestand).`
-      : `AI Flows-hooks bijgewerkt in ${tool.file} (reservekopie: ${path.basename(tool.file)}.bak-ai-flows).`);
+      ? `AI Flows hooks set in ${tool.file} (new file).`
+      : `AI Flows hooks updated in ${tool.file} (backup: ${path.basename(tool.file)}.bak-ai-flows).`);
     if (tool === CODEX) {
-      console.log('  Codex voert ze pas uit als je ze vertrouwt: Instellingen > Hooks in de app, of /hooks in de CLI.');
+      console.log('  Codex runs them only once you trust them: Settings > Hooks in the app, or /hooks in the CLI.');
     }
   } else {
-    console.log(`De AI Flows-hooks voor ${tool.name} staan er al; de hook zelf is ververst.`);
+    console.log(`The AI Flows hooks for ${tool.name} are already there; the hook itself was refreshed.`);
   }
 }

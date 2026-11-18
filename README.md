@@ -6,8 +6,8 @@ what finished recently (last 30 minutes to 24 hours). A macOS notification
 tells you when a new question comes in, and one click opens the session in its
 app.
 
-- **A list by status**: **Wacht op jou** (permission prompts, choices, plans to
-  approve and questions at the end of a turn), **Bezig** and **Klaar**, one row
+- **A list by status**: **Waiting for you** (permission prompts, choices, plans to
+  approve and questions at the end of a turn), **Working** and **Done**, one row
   per session with what it needs or is doing, and its own button to open it.
 - **The session you pick, in full** beside it: the question with its answer
   options, what it is doing right now (tool, subagents), your last prompt and
@@ -107,8 +107,8 @@ path.
 | `~/.claude/settings.json` | Writes: one hook entry per event, marked `# ai-flows` (removed by `uninstall.sh`) |
 | `~/.codex/hooks.json` | Writes (if `~/.codex` exists): the same, for Codex's permission and turn events |
 | `~/.codex/state_*.sqlite`, `~/.codex/sessions/` | Reads (read-only): Codex's thread list and the tail of recent rollout files (also for its limits) |
-| macOS keychain, item `Claude Code-credentials` | Reads, while **Limieten → Claude** is on (the default): Claude Code's login, to fetch your 5-hour and weekly limits (see [Limits](#limits)) |
-| `claude` (Claude Code's command) | Runs, while **Limieten → Claude** is on and that login has expired: `claude -p /usage`, at most every 15 minutes, so Claude Code renews it (see Security) |
+| macOS keychain, item `Claude Code-credentials` | Reads, while **Limits → Claude** is on (the default): Claude Code's login, to fetch your 5-hour and weekly limits (see [Limits](#limits)) |
+| `claude` (Claude Code's command) | Runs, while **Limits → Claude** is on and that login has expired: `claude -p /usage`, at most every 15 minutes, so Claude Code renews it (see Security) |
 | `~/.claude/ai-flows/` | Writes: `app/` (server, page, helper), `hook.sh`, daily event logs (7 days kept), `settings.json`, `token`, `marks.json`, `limits.json` (the last Claude limits), one-time `claim` codes, `notify/` payloads |
 | `~/.claude/projects/*/*.jsonl` | Reads: the tail of recent transcripts |
 | `~/Library/Application Support/Claude/claude-code-sessions/` | Reads: the desktop app's session titles and ids |
@@ -153,7 +153,7 @@ checkout.
   header, which a cross-site page can only send after a preflight that this
   server refuses.
 - No other site may frame the dashboard; only the dashboard itself may, for
-  the Mini-venster that stays on top.
+  the Mini window that stays on top.
 - Every response carries a Content Security Policy (own files only,
   `frame-ancestors 'self'`), `X-Frame-Options: SAMEORIGIN`, `nosniff`,
   `Referrer-Policy: no-referrer` and `Cross-Origin-Resource-Policy: same-origin`.
@@ -193,7 +193,7 @@ texts; only the four offered periods are computed, live connections are capped
 at 16 and slow readers are dropped; errors are logged at most once per 10
 minutes per kind.
 
-**Limits.** While **Limieten → Claude** is on (the default), the server reads
+**Limits.** While **Limits → Claude** is on (the default), the server reads
 Claude Code's login from the keychain (`/usr/bin/security`, item
 `Claude Code-credentials`) every few minutes while a dashboard is open, and
 sends only its access token, only to `https://api.anthropic.com/api/oauth/usage`.
@@ -206,8 +206,8 @@ in `~/.local/bin`, `~/.claude/local`, `/opt/homebrew/bin` or `/usr/local/bin`),
 at most every 15 minutes while a dashboard is open, with a bare environment,
 hooks, the session log and memory off, and without reading its output (it names
 the account). `/usage` runs in Claude Code itself; it asks the model nothing.
-Meanwhile the bar says "login vernieuwen…". Still expired after that means the
-sign-in itself has ended: the bar says "opnieuw inloggen", which takes
+Meanwhile the bar says "renewing login…". Still expired after that means the
+sign-in itself has ended: the bar says "sign in again", which takes
 `claude auth login` in a terminal. With the setting off the keychain is not
 read and nothing is run, and without a Claude Code login the Claude meter is
 left out.
@@ -231,9 +231,10 @@ left out.
   documented by OpenAI either. Without the database (no `sqlite3`, or a layout
   this version does not know) threads are found from their rollout files.
 - The endpoint behind the Claude limits is the one Claude Code's `/usage`
-  uses. It is not documented and can change; the bar then shows "niet
-  beschikbaar" for Claude.
-- The interface is in Dutch.
+  uses. It is not documented and can change; the bar then shows
+  "unavailable" for Claude.
+- AI Flows is not made by or affiliated with Anthropic or OpenAI. Claude and
+  Codex are their names for their own products.
 - Answering happens in Claude itself: an answer button copies the answer and
   opens the session, where you paste it with ⌘V. Terminal sessions get a
   `claude --resume` command to copy instead.
@@ -256,11 +257,11 @@ with a question. The question disappears as soon as you answer.
 
 **Opening sessions.** "Open in Claude", a mini row or an answer button opens
 `claude://code/continue?session=local_…` ("Open in Codex": `codex://threads/…`).
-How is a setting (**Instellingen** in the header):
-- **Zonder vraag** (default): the server opens the link. Nothing asks you, and
+How is a setting (**Settings** in the header):
+- **Without asking** (default): the server opens the link. Nothing asks you, and
   Claude jumps to the session, but it stays behind your current window: since
   macOS 14 a background program may not bring another app forward.
-- **Via je browser**: your browser or app opens the link, which brings Claude
+- **Through your browser**: your browser or app opens the link, which brings Claude
   forward with the keyboard focus. Chrome asks once (tick "Always allow");
   apps that cannot remember the choice ask every time.
 
@@ -276,19 +277,19 @@ blue when it should not). Marks are kept in `~/.claude/ai-flows/marks.json`.
 **Folders and closing.** Every session names the folder it was started in
 (for the Claude app its `originCwd`; a worktree counts as its repository, and a
 session started from another one sits with that one, as in the app's sidebar).
-Such a sub-task sits right under the session it came from, one step in with a
-line from it, in the list and in the mini view; the open sub-task names that
+Such a subtask sits right under the session it came from, one step in with a
+line from it, in the list and in the mini view; the open subtask names that
 session, and a click on the name picks it. The arrow after that session's title
-folds its sub-tasks into one line ("4 sub-taken · 1 nieuw", blue when one needs
+folds its subtasks into one line ("4 subtasks · 1 new", blue when one needs
 you) that unfolds them again; the left and right arrow keys do the same. This is
-remembered per browser. A sub-task in another group than its session (still
+remembered per browser. A subtask in another group than its session (still
 busy while that one is done, say) names it on its row.
 The mini view groups by it, A to Z; click a folder to fold it shut. A shut
-folder shows what it holds ("1 wacht · 2 bezig") and turns its count blue when
-something in it needs you. Folding is remembered per browser. **Sluit sessie**
+folder shows what it holds ("1 waiting · 2 working") and turns its count blue when
+something in it needs you. Folding is remembered per browser. **Close session**
 (under the open session, or right-click) drops one you are done with, even
 inside the time window: it stays away until you send it a new message or it
-asks you something new, and the toast offers **Ongedaan maken**. Closing only
+asks you something new, and the toast offers **Undo**. Closing only
 hides it here; the session itself is untouched.
 
 **Full view.** The list on the left keeps the session you picked (per tab,
@@ -317,25 +318,25 @@ separately, and macOS rounds the corners.
 **Mini view.** One row per session under its folder: status dot, title and
 time; questions also show the question, and without open questions that part
 is left out. It switches on in any window narrower than 760 px (where the
-list and a session no longer fit side by side). **Mini-venster** opens just
+list and a session no longer fit side by side). **Mini window** opens just
 such a window, 320×460. In Chrome and Edge it stays above all other windows,
 also those of other apps, and has no address bar (a Picture-in-Picture
 window with the dashboard in it); its arrow button brings the dashboard tab
 back, and it goes when that tab closes. Chrome tells pages in such a window
 that they are dark; this one follows the dashboard tab's light or dark (its
 title bar stays dark: Chrome draws it). Chrome keeps it at least 240 px wide;
-lower it can go down to about 50 px. **Instellingen → Weergave → Mini-venster
-altijd bovenaan** (on by default) switches it off for an ordinary window,
+lower it can go down to about 50 px. **Settings → Display → Mini window
+always on top** (on by default) switches it off for an ordinary window,
 which can be narrower. Elsewhere it is an ordinary pop-up of
 the dashboard, which is the full view again once you widen it, with
-**Volledig dashboard openen** to bring the dashboard tab forward. In a narrow
+**Open the full dashboard** to bring the dashboard tab forward. In a narrow
 window widening it is the way to the full view (no button for it). `?full` shows the full view for one
 load, until the window crosses 760 px or you press the mini button in the
 header. (`?mini` is gone; old links drop it.) Without a scrollbar the mini view keeps no room free for one. Its mini bar holds the same controls as the header,
-compact: the period (30m, 2u, 8u, 24u), notifications and settings. The
+compact: the period (30m, 2h, 8h, 24h), notifications and settings. The
 settings open over the window under that bar, and the settings button, now
 an X, closes them from the same spot. In another app, open http://127.0.0.1:4777 in a
-small window. In a window lower than 160 px, or narrower than 190 px (too narrow for the list), only three counters remain: **vragen**, **bezig** and **klaar** (finished
+small window. In a window lower than 160 px, or narrower than 190 px (too narrow for the list), only three counters remain: **questions**, **working** and **done** (finished
 and not looked at yet). A counter with exactly one session opens it with a click
 (or copies its resume command), shown by a small arrow. One with more opens a
 small window beside it (`?pick=q|w|d`) with just those sessions, by folder
@@ -376,12 +377,12 @@ few seconds:
   permission, tool, stop and interrupt events. Codex only runs hooks you added
   yourself once you trust them: open **Settings → Hooks** in the Codex app (or
   `/hooks` in the CLI) and trust the AI Flows entries. Until then everything
-  else works; a permission prompt just shows as "Bezig".
+  else works; a permission prompt just shows as "Working".
 
-Codex sessions show **Codex-app** or **Codex CLI** with their name and
+Codex sessions show **Codex app** or **Codex CLI** with their name and
 **Open in Codex**, which opens `codex://threads/<id>` in the app; CLI threads
-offer a `codex resume` command to copy instead. **Instellingen → Weergave →
-Toon de AI-tool** (off by default) adds a Claude or Codex label to each
+offer a `codex resume` command to copy instead. **Settings → Display →
+Show the AI tool** (off by default) adds a Claude or Codex label to each
 session: in the list, the open session, the mini view and the pick window. Read and unread work
 through the right-click menu, as for terminal sessions: Codex records no
 "seen" moment the dashboard can read.
@@ -393,9 +394,9 @@ already sends, with its own `tool` and `toolName`.
 ## As an app
 
 Chrome shows its address bar in every ordinary pop-up; a page cannot hide it.
-The **Mini-venster** that stays on top has none (see Mini view). Installed as an app, the dashboard gets a
+The **Mini window** that stays on top has none (see Mini view). Installed as an app, the dashboard gets a
 window of its own without one: in Chrome, click the install icon at the right
-of the address bar (or **⋮ → Opslaan en delen → Pagina installeren als app**).
+of the address bar (or **⋮ → Cast, save, and share → Install page as app**).
 Make that window small and it is the mini view; wide, the full view. The
 manifest (`public/manifest.webmanifest`) names it AI Flows, with the same icon
 as the notifier.
@@ -404,14 +405,14 @@ as the notifier.
 
 A bar fixed to the bottom of the dashboard and the mini view shows, per AI
 tool, how much of its 5-hour and weekly limit you have used. In the full view
-each limit has a card of its own: its name (**5 uur**, **Week**), when it
+each limit has a card of its own: its name (**5 hours**, **Week**), when it
 resets, a bar and the percentage; with two tools that do not fit on one line,
 one line per tool. The mini view has one small meter per tool, with a thick
 bar for the 5 hours over a thin one for the week, and both percentages
 (`21% / 45%`); hover it for the reset times. A bar turns orange from 75% and
 red from 90%. In a narrow mini view the meters go one per row;
 the micro view has them on a line of their own, or at the end of its strip. Each tool has its own switch under
-**Instellingen → Limieten** (both on by default).
+**Settings → Limits** (both on by default).
 
 - **Claude**: the endpoint behind Claude Code's `/usage`, with the login
   Claude Code keeps in the keychain, every 3 minutes while a dashboard is
@@ -420,7 +421,7 @@ the micro view has them on a line of their own, or at the end of its strip. Each
   (6 minutes, then 12, up to an hour) and keeps showing the last numbers (their
   age is in the tooltip). Those are kept in `~/.claude/ai-flows/limits.json`,
   so a restart shows them at once and does not ask again before they are due.
-  With no numbers yet the bar says "even geduld".
+  With no numbers yet the bar says "hold on".
 - **Codex**: every Codex turn writes its limits into the thread's rollout
   file, so the bar shows them as of your last Codex turn. A window whose reset
   time has passed shows 0%.
@@ -447,10 +448,15 @@ settings and its own key), and `AI_FLOWS_DRY_OPEN=1` logs sessions it would
 open and notifications it would send instead of doing it.
 `AI_FLOWS_CODEX_HOME=…` reads Codex threads from another folder than `~/.codex`, and
 `AI_FLOWS_CLAUDE_USAGE=<file>` reads a usage response from a file instead of the
-keychain and the network (`{"error": "expired"}` stands for an expired login),
+keychain and the network (`{"error": "expired"}` stands for an expired login,
+`{"error": "ratelimited"}` for "asked too often"),
 and `AI_FLOWS_CLAUDE_BIN=<file>` is run in place of `claude` to renew it. To feed it test
 events, pipe JSON into `./hook.sh <folder>` (`./hook.sh <folder> codex` for a Codex event). API calls need the key as
 `X-AI-Flows-Token` (or `?t=` for the stream). `?snapshot` loads the state once
 instead of streaming it, for headless screenshots. Changes in the checkout
 only reach the running dashboard through `./install.sh`, which copies them and
 restarts the service.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

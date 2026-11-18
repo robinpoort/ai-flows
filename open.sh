@@ -14,23 +14,23 @@ PATH=/usr/bin:/bin
 umask 077
 DIR="$HOME/.claude/ai-flows"
 PORT="${AI_FLOWS_PORT:-4777}"
-case "$PORT" in ''|*[!0-9]*) echo "AI_FLOWS_PORT moet een getal zijn."; exit 1 ;; esac
+case "$PORT" in ''|*[!0-9]*) echo "AI_FLOWS_PORT must be a number."; exit 1 ;; esac
 
 if [ "$1" = "--new-key" ]; then
   shift
   rm -f "$DIR/token"
   if ! launchctl kickstart -k "gui/$(id -u)/local.ai-flows" >/dev/null 2>&1; then
-    echo "Kon de server niet herstarten. Draai ./install.sh"
+    echo "Could not restart the server. Run ./install.sh"
     exit 1
   fi
-  echo "Nieuwe sleutel gemaakt: open AI Flows in elke browser opnieuw met dit script."
+  echo "New key made: open AI Flows again in every browser with this script."
 fi
 
 # The server creates the key on its first start; give it a moment.
 i=0
 while [ ! -s "$DIR/token" ] && [ $i -lt 40 ]; do sleep 0.25; i=$((i + 1)); done
 if [ ! -s "$DIR/token" ]; then
-  echo "Geen sleutel gevonden in $DIR. Draait de server? Start hem met ./install.sh"
+  echo "No key found in $DIR. Is the server running? Start it with ./install.sh"
   exit 1
 fi
 
@@ -41,8 +41,8 @@ LINK="http://127.0.0.1:$PORT/#c=$CODE"
 case "$1" in
   --copy)
     printf '%s' "$LINK" | pbcopy
-    echo "De link staat op je klembord (twee minuten geldig, één keer te gebruiken)."
-    echo "Plak hem in de adresbalk, of in het veld op de AI Flows-pagina."
+    echo "The link is on your clipboard (valid for two minutes, for one use)."
+    echo "Paste it in the address bar, or in the field on the AI Flows page."
     ;;
   --print)
     echo "$LINK"

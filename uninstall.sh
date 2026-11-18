@@ -14,12 +14,12 @@ for app in "$APP_DIR/notifier/AI Flows.app" "notifier/AI Flows.app"; do
   [ -d "$app" ] && "$LSREGISTER" -u "$app" 2>/dev/null
 done
 rm -rf "$APP_DIR" "notifier/AI Flows.app"
-echo "Server, pagina en meldingsappje verwijderd."
+echo "Server, page and notifier removed."
 
 echo
-echo "AI Flows is verwijderd. Wat er nog staat, kun je zelf weggooien:"
-echo "  ~/.claude/ai-flows/                     (event-log van de laatste 7 dagen, instellingen en toegangssleutel)"
-echo "  ~/.claude/settings.json.bak-ai-flows    (reservekopie van je Claude-instellingen van vóór de laatste wijziging)"
-[ -f "$HOME/.codex/hooks.json.bak-ai-flows" ] && echo "  ~/.codex/hooks.json.bak-ai-flows        (reservekopie van je Codex-hooks van vóór de laatste wijziging)"
+echo "AI Flows is removed. What is left, you can delete yourself:"
+echo "  ~/.claude/ai-flows/                     (event log of the last 7 days, settings and access key)"
+echo "  ~/.claude/settings.json.bak-ai-flows    (backup of your Claude settings from before the last change)"
+[ -f "$HOME/.codex/hooks.json.bak-ai-flows" ] && echo "  ~/.codex/hooks.json.bak-ai-flows        (backup of your Codex hooks from before the last change)"
 echo "  ~/Library/Logs/ai-flows.log             (serverlog)"
-echo "  deze map                                ($(pwd))"
+echo "  this folder                             ($(pwd))"

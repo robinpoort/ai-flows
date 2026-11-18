@@ -57,12 +57,12 @@ const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 if (process.argv.includes('--remove')) {
   stopService();
   if (fs.existsSync(PLIST)) fs.unlinkSync(PLIST);
-  console.log('AI Flows-dienst gestopt en verwijderd.');
+  console.log('AI Flows service stopped and removed.');
   process.exit(0);
 }
 
 if (!fs.existsSync(SERVER)) {
-  console.error(`Geen server gevonden in ${APP_DIR}. Installeer met ./install.sh`);
+  console.error(`No server found in ${APP_DIR}. Install it with ./install.sh`);
   process.exit(1);
 }
 
@@ -93,8 +93,8 @@ fs.mkdirSync(path.dirname(PLIST), { recursive: true });
 fs.writeFileSync(PLIST, plist);
 stopService();
 if (!startService()) {
-  console.error(`Starten mislukt. Probeer: launchctl bootstrap ${domain} ${PLIST}`);
+  console.error(`Starting failed. Try: launchctl bootstrap ${domain} ${PLIST}`);
   process.exit(1);
 }
-console.log(`AI Flows draait nu als dienst op http://127.0.0.1:${PORT} en start voortaan bij het inloggen.`);
+console.log(`AI Flows now runs as a service on http://127.0.0.1:${PORT} and starts when you log in.`);
 console.log(`Log: ${LOG}`);

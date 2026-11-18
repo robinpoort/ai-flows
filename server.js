@@ -88,7 +88,7 @@ function isAutomated(text) {
 
 function automatedLabel(text) {
   if (/^<task-notification/.test(text)) return 'Achtergrondtaak gemeld';
-  if (/^<side-sessions-event/.test(text)) return 'Bericht van een andere sessie';
+  if (/^<side-sessions-event/.test(text)) return 'Message from another session';
   if (/^<ci-monitor-event/.test(text)) return 'CI-melding';
   if (/^<bash-/.test(text)) return 'Shell-commando';
   if (/^<(command-|local-command)/.test(text)) return 'Slash-commando';
@@ -126,7 +126,7 @@ function askFromTool(tool, input) {
     const qs = Array.isArray(input && input.questions) ? input.questions : [];
     return {
       kind: 'ask',
-      text: qs.map((q) => q.question).filter(Boolean).join('\n') || 'Er is een vraag voor je',
+      text: qs.map((q) => q.question).filter(Boolean).join('\n') || 'There is a question for you',
       options: qs.length === 1 && Array.isArray(qs[0].options) ? qs[0].options.map((o) => o.label).filter(Boolean) : [],
       parts: qs.map((q) => ({
         header: q.header || null,
@@ -138,13 +138,13 @@ function askFromTool(tool, input) {
     };
   }
   if (tool === 'ExitPlanMode') {
-    return { kind: 'plan', text: 'Plan klaar: goedkeuren?', options: [], context: clip(input && input.plan, 1200) || null };
+    return { kind: 'plan', text: 'Plan ready: approve it?', options: [], context: clip(input && input.plan, 1200) || null };
   }
   return null;
 }
 
 function projectFromCwd(cwd) {
-  if (!cwd) return { name: 'onbekend', detail: '' };
+  if (!cwd) return { name: 'unknown', detail: '' };
   const wt = cwd.match(/^(.*?)\/\.claude\/worktrees\/([^/]+)/);
   if (wt) return { name: path.basename(wt[1]), detail: wt[2] };
   const rel = cwd.startsWith(HOME) ? '~' + cwd.slice(HOME.length) : cwd;
@@ -161,7 +161,7 @@ function folderOf(desk, cwd) {
     desk = parent;
   }
   let dir = (desk && (desk.originCwd || desk.cwd)) || cwd;
-  if (!dir) return { key: '', name: 'Zonder map', detail: '' };
+  if (!dir) return { key: '', name: 'No folder', detail: '' };
   const wt = dir.match(/^(.*?)\/\.claude\/worktrees\/[^/]+/);
   if (wt) dir = wt[1];
   const rel = dir.startsWith(HOME) ? '~' + dir.slice(HOME.length) : dir;
@@ -309,7 +309,7 @@ function deriveFromEvents(events) {
           if (!st.perm) st.perm = { tool: null, sum: e.msg || '', ts: e.ts };
           set('permission', e.ts);
         } else if (e.ntype === 'elicitation_dialog') {
-          st.ask = { kind: 'elicitation', text: e.msg || 'Een MCP-server vraagt om invoer', options: [], ts: e.ts };
+          st.ask = { kind: 'elicitation', text: e.msg || 'An MCP server asks for input', options: [], ts: e.ts };
           set('question', e.ts);
         }
         break;
@@ -890,7 +890,7 @@ function buildCodexSession(t) {
   if (perm) {
     status = 'permission';
     question = {
-      kind: 'permission', text: perm.tool ? `Mag Codex ${perm.tool} gebruiken?` : 'Codex vraagt toestemming',
+      kind: 'permission', text: perm.tool ? `May Codex use ${perm.tool}?` : 'Codex asks for permission',
       tool: perm.tool, detail: perm.tool ? perm.sum : null, options: [], context: null, ts: perm.ts,
     };
   } else if (status === 'question' && st.ask) {
@@ -930,7 +930,7 @@ function buildCodexSession(t) {
     folder: folderOf(null, cwd),
     cwd,
     closed,
-    app: cli ? 'Codex CLI' : 'Codex-app',
+    app: cli ? 'Codex CLI' : 'Codex app',
     archived: !!Number(t.archived),
     unread,
     status,
@@ -1376,7 +1376,7 @@ function buildSession(sid) {
     const p = st.perm || {};
     question = {
       kind: 'permission',
-      text: p.tool ? `Mag Claude ${p.tool} gebruiken?` : (p.sum || 'Claude vraagt toestemming'),
+      text: p.tool ? `May Claude use ${p.tool}?` : (p.sum || 'Claude asks for permission'),
       tool: p.tool || null, detail: p.tool ? p.sum : null, options: [], context: null, ts: p.ts || st.since,
     };
   }
@@ -1417,7 +1417,7 @@ function buildSession(sid) {
     folder: folderOf(desk, cwd),
     cwd,
     closed,
-    app: isDesktop ? 'Claude-app' : 'Terminal',
+    app: isDesktop ? 'Claude app' : 'Terminal',
     archived: desk ? desk.archived : false,
     unread,
     status,
@@ -1681,7 +1681,7 @@ function announceQuestion(s, key) {
   runNotifier({
     id,
     title: s.title,
-    subtitle: `${perm ? 'Toestemming nodig' : 'Vraag'} · ${s.project}`,
+    subtitle: `${perm ? 'Needs permission' : 'Question'} · ${s.project}`,
     body: clip(String(body).replace(/\s+/g, ' '), 240),
     url: s.openUrl || DASHBOARD_URL,
     thread: s.id,
@@ -1766,8 +1766,8 @@ async function handleSettings(req, res) {
       settings.notify = body.notify;
       saveSettings();
       if (body.notify && notifierAvailable()) {
-        runNotifier({ id: 'ai-flows-test', title: 'AI Flows', subtitle: 'Meldingen staan aan',
-          body: 'Je krijgt hier een melding zodra een sessie iets van je nodig heeft.', url: DASHBOARD_URL });
+        runNotifier({ id: 'ai-flows-test', title: 'AI Flows', subtitle: 'Notifications are on',
+          body: 'You get a notification here as soon as a session needs something from you.', url: DASHBOARD_URL });
       }
     }
   }
@@ -1796,7 +1796,7 @@ async function handleClaim(req, res) {
   const b = Buffer.from(stored);
   const match = fresh && b.length >= 32 && a.length === b.length && crypto.timingSafeEqual(a, b);
   if (match || (stored && !fresh)) { try { fs.unlinkSync(CLAIM_FILE); } catch {} }
-  if (!match) return sendJson(res, { error: 'Deze code is ongeldig of verlopen' }, 401);
+  if (!match) return sendJson(res, { error: 'This code is invalid or has expired' }, 401);
   sendJson(res, { token: TOKEN.toString() });
 }
 
@@ -1810,7 +1810,7 @@ async function handleMark(req, res) {
   // { unread: true/false } is how pages from before "close" ask.
   const kind = body && typeof body.mark === 'string' ? body.mark
     : body && typeof body.unread === 'boolean' ? (body.unread ? 'unread' : 'read') : '';
-  if (!/^[A-Za-z0-9_-]{1,100}$/.test(sid) || !MARK_KINDS.includes(kind)) return sendJson(res, { error: 'Ongeldig' }, 400);
+  if (!/^[A-Za-z0-9_-]{1,100}$/.test(sid) || !MARK_KINDS.includes(kind)) return sendJson(res, { error: 'Invalid' }, 400);
   const m = { ...(marks.get(sid) || {}) };
   const now = Date.now();
   if (kind === 'unread') m.unread = now;
@@ -1875,7 +1875,7 @@ function handle(req, res) {
     });
   }
   if (url.pathname.startsWith('/api/')) {
-    if (!authorized(req, url)) return sendJson(res, { error: 'Geen toegang' }, 401);
+    if (!authorized(req, url)) return sendJson(res, { error: 'No access' }, 401);
     const windowMin = windowOf(Number(url.searchParams.get('window')) || 120);
     if (url.pathname === '/api/state') return sendJson(res, computeState(windowMin, true));
     if (url.pathname === '/api/open') return openSession(req, res, url.searchParams.get('id'));
@@ -1901,7 +1901,7 @@ function handle(req, res) {
       req.on('close', () => streams.delete(c));
       return;
     }
-    return sendJson(res, { error: 'Onbekend' }, 404);
+    return sendJson(res, { error: 'Unknown' }, 404);
   }
 
   // Pages always live on 127.0.0.1 (see DASHBOARD_URL). Old localhost links
@@ -1916,7 +1916,7 @@ function handle(req, res) {
   const fp = path.join(PUBLIC_DIR, file);
   if (!fp.startsWith(PUBLIC_DIR + path.sep)) { res.writeHead(403); return res.end(); }
   fs.readFile(fp, (err, data) => {
-    if (err) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('Niet gevonden'); }
+    if (err) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('Not found'); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(fp)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
     res.end(data);
   });
@@ -1942,12 +1942,12 @@ function listen(host, optional) {
   const srv = http.createServer(onRequest);
   srv.on('error', (err) => {
     if (optional && (err.code === 'EADDRNOTAVAIL' || err.code === 'EAFNOSUPPORT')) return; // no IPv6 here
-    console.error(`${new Date().toISOString()} Kan niet luisteren op ${host} poort ${PORT} (${err.code}). Draait daar al iets anders?`);
+    console.error(`${new Date().toISOString()} Cannot listen on ${host} port ${PORT} (${err.code}). Is something else running there?`);
     process.exit(1);
   });
   srv.listen(PORT, host);
 }
 listen(HOST, false);
 listen('::1', true);
-console.log(`AI Flows draait op http://127.0.0.1:${PORT}`);
+console.log(`AI Flows runs on http://127.0.0.1:${PORT}`);
 console.log(`Hook-log: ${EVENTS_DIR}`);

@@ -112,32 +112,32 @@
   const cleanAnswer = (s) => Array.from(String(s).replace(INVISIBLE, '').replace(/\s+/g, ' ').trim()).slice(0, 300).join('');
 
   const STATUS = {
-    working: { label: 'Bezig', cls: 'working' },
-    permission: { label: 'Toestemming nodig', cls: 'permission' },
-    question: { label: 'Wacht op jou', cls: 'question' },
-    done: { label: 'Klaar', cls: 'done' },
-    idle: { label: 'Gestart', cls: 'idle' },
-    interrupted: { label: 'Onderbroken', cls: 'idle' },
-    stale: { label: 'Stil', cls: 'stale' },
-    error: { label: 'Fout', cls: 'error' },
-    ended: { label: 'Afgesloten', cls: 'idle' },
+    working: { label: 'Working', cls: 'working' },
+    permission: { label: 'Needs permission', cls: 'permission' },
+    question: { label: 'Waiting for you', cls: 'question' },
+    done: { label: 'Done', cls: 'done' },
+    idle: { label: 'Started', cls: 'idle' },
+    interrupted: { label: 'Interrupted', cls: 'idle' },
+    stale: { label: 'Quiet', cls: 'stale' },
+    error: { label: 'Error', cls: 'error' },
+    ended: { label: 'Ended', cls: 'idle' },
   };
 
   const QUESTION_KIND = {
-    wrap: 'Vraag',
-    text: 'Vraag in het antwoord',
-    ask: 'Keuzevraag',
-    plan: 'Plan goedkeuren',
-    permission: 'Toestemming',
-    elicitation: 'Invoer gevraagd',
+    wrap: 'Question',
+    text: 'Question in the reply',
+    ask: 'Choice',
+    plan: 'Approve the plan',
+    permission: 'Permission',
+    elicitation: 'Input requested',
   };
 
   const TOOL_NAMES = {
-    Bash: 'Terminal', Read: 'Lezen', Edit: 'Bewerken', MultiEdit: 'Bewerken', Write: 'Schrijven',
-    Grep: 'Zoeken', Glob: 'Bestanden zoeken', WebFetch: 'Webpagina', WebSearch: 'Webzoeken',
-    Agent: 'Subagent', Task: 'Subagent', Skill: 'Skill', ToolSearch: 'Tools laden', Monitor: 'Wachten',
-    exec: 'Terminal', js: 'Script', apply_patch: 'Bewerken', spawn_agent: 'Subagent', update_plan: 'Plan',
-    NotebookEdit: 'Notebook', Artifact: 'Artifact', SendUserFile: 'Bestand sturen', Workflow: 'Workflow',
+    Bash: 'Terminal', Read: 'Read', Edit: 'Edit', MultiEdit: 'Edit', Write: 'Write',
+    Grep: 'Search', Glob: 'Find files', WebFetch: 'Web page', WebSearch: 'Web search',
+    Agent: 'Subagent', Task: 'Subagent', Skill: 'Skill', ToolSearch: 'Loading tools', Monitor: 'Waiting',
+    exec: 'Terminal', js: 'Script', apply_patch: 'Edit', spawn_agent: 'Subagent', update_plan: 'Plan',
+    NotebookEdit: 'Notebook', Artifact: 'Artifact', SendUserFile: 'Sending a file', Workflow: 'Workflow',
   };
 
   let windowMin = store.get('window', 120);
@@ -165,11 +165,11 @@
   }
 
   function toolName(tool) {
-    if (!tool) return 'Bezig';
+    if (!tool) return 'Working';
     if (TOOL_NAMES[tool]) return TOOL_NAMES[tool];
     if (/^mcp__claude-in-chrome__/.test(tool)) return 'Chrome';
     if (/^mcp__Claude_Browser__/.test(tool)) return 'Browser';
-    if (/^mcp__ccd_/.test(tool)) return 'Claude-app';
+    if (/^mcp__ccd_/.test(tool)) return 'Claude app';
     const m = tool.match(/^mcp__[^_]+(?:_[^_]+)*?__(.+)$/);
     return m ? m[1].replace(/_/g, ' ') : tool;
   }
@@ -183,19 +183,19 @@
 
   function ago(ts) {
     const m = Math.floor(Math.max(0, Date.now() - ts) / 60000);
-    if (m < 1) return 'zojuist';
-    if (m < 60) return `${m} min geleden`;
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m} min ago`;
     const h = Math.floor(m / 60);
-    if (h < 24) return `${h} u${m % 60 ? ' ' + (m % 60) + ' min' : ''} geleden`;
-    return `${Math.floor(h / 24)} d geleden`;
+    if (h < 24) return `${h} h${m % 60 ? ' ' + (m % 60) + ' min' : ''} ago`;
+    return `${Math.floor(h / 24)} d ago`;
   }
 
   function compact(ts) {
     const m = Math.floor(Math.max(0, Date.now() - ts) / 60000);
-    if (m < 1) return 'nu';
+    if (m < 1) return 'now';
     if (m < 60) return `${m}m`;
     const h = Math.floor(m / 60);
-    return h < 24 ? `${h}u` : `${Math.floor(h / 24)}d`;
+    return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
   }
 
   function dur(ts) {
@@ -203,7 +203,7 @@
     if (m < 1) return '<1 min';
     if (m < 60) return `${m} min`;
     const h = Math.floor(m / 60);
-    return `${h} u${m % 60 ? ' ' + (m % 60) + ' min' : ''}`;
+    return `${h} h${m % 60 ? ' ' + (m % 60) + ' min' : ''}`;
   }
 
   // Time labels are filled in after render so cached card HTML stays stable.
@@ -217,18 +217,18 @@
       if (!ts) { setText(el, ''); continue; }
       const text = el.dataset.mode === 'dur' ? dur(ts) : el.dataset.mode === 'compact' ? compact(ts) : ago(ts);
       setText(el, (el.dataset.prefix ? el.dataset.prefix + ' ' : '') + text);
-      const title = new Date(ts).toLocaleString('nl-NL');
+      const title = new Date(ts).toLocaleString('en-GB');
       if (el.title !== title) el.title = title;
     }
   }
 
   function statusTime(s) {
     switch (s.status) {
-      case 'working': return timeEl(s.since, 'dur', 'al');
+      case 'working': return timeEl(s.since, 'dur', 'for');
       case 'question':
-      case 'permission': return timeEl((s.question && s.question.ts) || s.since, 'dur', 'wacht');
-      case 'stale': return timeEl(s.lastTs, 'ago', 'stil sinds');
-      case 'done': return timeEl(s.since || s.lastTs, 'ago', 'klaar');
+      case 'permission': return timeEl((s.question && s.question.ts) || s.since, 'dur', 'waiting');
+      case 'stale': return timeEl(s.lastTs, 'ago', 'last active');
+      case 'done': return timeEl(s.since || s.lastTs, 'ago', 'done');
       default: return timeEl(s.lastTs, 'ago');
     }
   }
@@ -243,7 +243,7 @@
       return `<a class="btn ${primary ? 'primary' : ''}" href="${esc(s.openUrl)}" data-act="open" data-sid="${esc(s.id)}">${ICON_OPEN}Open in ${esc(appOf(s))}</a>`;
     }
     if (s.resumeCmd) {
-      return `<button type="button" class="btn ${primary ? 'primary' : ''}" data-act="copy" data-text="${esc(s.resumeCmd)}" title="${esc(s.resumeCmd)}">${ICON_COPY}Kopieer resume-commando</button>`;
+      return `<button type="button" class="btn ${primary ? 'primary' : ''}" data-act="copy" data-text="${esc(s.resumeCmd)}" title="${esc(s.resumeCmd)}">${ICON_COPY}Copy resume command</button>`;
     }
     return '';
   }
@@ -251,7 +251,7 @@
   function optionsHtml(s, options) {
     if (!options || !options.length) return '';
     return `<div class="options">${options.map((o) =>
-      `<button type="button" class="option" data-act="answer" data-sid="${esc(s.id)}" data-text="${esc(o.label)}" title="Kopieer en open de sessie">${esc(o.label)}${o.desc ? `<small>${esc(o.desc)}</small>` : ''}</button>`
+      `<button type="button" class="option" data-act="answer" data-sid="${esc(s.id)}" data-text="${esc(o.label)}" title="Copy and open the session">${esc(o.label)}${o.desc ? `<small>${esc(o.desc)}</small>` : ''}</button>`
     ).join('')}</div>`;
   }
 
@@ -264,9 +264,9 @@
   // its question with the answers, what it is doing, your prompt and the full
   // reply. Each row also has its own button to open the session straight away.
   const SECTIONS = [
-    { key: 'you', label: 'Wacht op jou' },
-    { key: 'busy', label: 'Bezig' },
-    { key: 'done', label: 'Klaar' },
+    { key: 'you', label: 'Waiting for you' },
+    { key: 'busy', label: 'Working' },
+    { key: 'done', label: 'Done' },
   ];
   const asks = (s) => !!s.question && (s.status === 'question' || s.status === 'permission');
   const sectionOf = (s) => (asks(s) ? 'you' : s.status === 'working' || s.status === 'stale' ? 'busy' : 'done');
@@ -294,7 +294,7 @@
     const prompt = (s.prompt && s.prompt.text) || (s.autoPrompt && s.autoPrompt.text) || '';
     if (s.status === 'working' || s.status === 'stale') {
       const doing = s.activity ? [toolName(s.activity.tool), shortPath(s.activity.sum)].filter(Boolean).join(' · ') : prompt;
-      return s.status === 'stale' ? `Stil · ${doing}` : doing || 'Bezig';
+      return s.status === 'stale' ? `Quiet · ${doing}` : doing || 'Working';
     }
     if (s.status === 'error' && s.error) return s.error.text;
     const text = plain(s.recap || (s.last && s.last.text) || '');
@@ -311,7 +311,7 @@
     const open = s.openUrl
       ? `<a class="srow-open" href="${esc(s.openUrl)}" data-act="open" data-sid="${esc(s.id)}" title="Open in ${esc(app)}" aria-label="${esc(`Open ${s.title} in ${app}`)}">${ICON_OPEN}</a>`
       : s.resumeCmd
-        ? `<button type="button" class="srow-open" data-act="copy" data-text="${esc(s.resumeCmd)}" title="Kopieer resume-commando" aria-label="${esc(`Kopieer het resume-commando van ${s.title}`)}">${ICON_COPY}</button>`
+        ? `<button type="button" class="srow-open" data-act="copy" data-text="${esc(s.resumeCmd)}" title="Copy resume command" aria-label="${esc(`Copy the resume command of ${s.title}`)}">${ICON_COPY}</button>`
         // Nothing to open: keep its place, so the times stay in one column.
         : '<span class="srow-open none" aria-hidden="true"></span>';
     return {
@@ -323,7 +323,7 @@
           <span class="stitle-line"><span class="stitle">${esc(s.title)}</span>${subToggle(r)}</span>
           ${timeEl(when, 'compact')}
           <span class="sline">${esc(rowLine(s))}</span>
-          <span class="smeta">${miniTools ? `<span class="stool">${esc(app)}</span>` : ''}${esc(folderName(s))} · ${esc(s.app)}${from ? ` · sub-taak van ${esc(from.title)}` : ''}</span>
+          <span class="smeta">${miniTools ? `<span class="stool">${esc(app)}</span>` : ''}${esc(folderName(s))} · ${esc(s.app)}${from ? ` · subtask of ${esc(from.title)}` : ''}</span>
         </button>
         ${open}
       </div>`,
@@ -387,7 +387,7 @@
         ${q.context ? `<p class="d-text muted">${esc(plain(q.context))}</p>` : ''}
         ${optionsHtml(s, (q.options || []).map((label) => ({ label })))}`;
     }
-    return `<section class="d-card ${perm ? 'permission' : 'ask'}"><div class="d-label">${esc(QUESTION_KIND[q.kind] || 'Vraag')}</div>${inner}</section>`;
+    return `<section class="d-card ${perm ? 'permission' : 'ask'}"><div class="d-label">${esc(QUESTION_KIND[q.kind] || 'Question')}</div>${inner}</section>`;
   }
 
   function detailHtml(s) {
@@ -396,7 +396,7 @@
     const out = [];
     out.push(`
       <div class="d-meta">
-        <span class="pill ${st.cls}${s.unread ? ' unread' : ''}"><span class="dot"></span>${esc(s.unread ? 'Nieuw' : st.label)}</span>
+        <span class="pill ${st.cls}${s.unread ? ' unread' : ''}"><span class="dot"></span>${esc(s.unread ? 'New' : st.label)}</span>
         <span class="chip-app">${esc(s.app)}</span>
         ${miniTools ? `<span class="chip-app">${esc(app)}</span>` : ''}
         <span class="spacer"></span>
@@ -406,7 +406,7 @@
       <div class="d-path" title="${esc(s.cwd || '')}">${ICON_FOLDER}<span>${esc(s.project)}${s.cwd ? ` · ${esc(shortPath(s.cwd))}` : ''}</span></div>`);
     const parent = parentOf(s);
     if (parent) {
-      out.push(`<div class="d-parent">${ICON_SUB}<span>Sub-taak van</span><button type="button" class="link" data-act="select" data-sid="${esc(parent.id)}">${esc(parent.title)}</button></div>`);
+      out.push(`<div class="d-parent">${ICON_SUB}<span>Subtask of</span><button type="button" class="link" data-act="select" data-sid="${esc(parent.id)}">${esc(parent.title)}</button></div>`);
     }
 
     if (asks(s)) out.push(questionBlock(s));
@@ -417,21 +417,21 @@
       for (const a of s.subagents || []) {
         rows.push(`<div class="act-row"><span class="tool">Subagent</span><span class="what">${esc(a.type || '')}${a.activity ? ` · ${esc(toolName(a.activity.tool))} <span class="mono">${esc(shortPath(a.activity.sum || ''))}</span>` : ''}</span></div>`);
       }
-      if (rows.length) out.push(`<section class="d-card act ${s.status}"><div class="d-label">${s.status === 'stale' ? 'Laatst gezien' : 'Nu bezig'}</div>${rows.join('')}</section>`);
+      if (rows.length) out.push(`<section class="d-card act ${s.status}"><div class="d-label">${s.status === 'stale' ? 'Last seen' : 'Doing now'}</div>${rows.join('')}</section>`);
     }
 
     if (s.status === 'error' && s.error) {
-      out.push(`<section class="d-card error"><div class="d-label">Fout</div><p class="d-text">${esc(s.error.text)}</p></section>`);
+      out.push(`<section class="d-card error"><div class="d-label">Error</div><p class="d-text">${esc(s.error.text)}</p></section>`);
     }
 
     const last = s.last && s.last.text ? plain(s.last.text) : '';
     const recap = s.recap ? plain(s.recap) : '';
     if (recap && !asks(s) && !last.includes(recap)) {
-      out.push(`<section class="d-card"><div class="d-label">Samenvatting</div><p class="d-text">${esc(recap)}</p></section>`);
+      out.push(`<section class="d-card"><div class="d-label">Summary</div><p class="d-text">${esc(recap)}</p></section>`);
     }
 
     const msgs = [];
-    if (s.prompt && s.prompt.text) msgs.push(`<div class="msg you"><span class="who">Jij</span><div class="body">${esc(s.prompt.text)}</div></div>`);
+    if (s.prompt && s.prompt.text) msgs.push(`<div class="msg you"><span class="who">You</span><div class="body">${esc(s.prompt.text)}</div></div>`);
     else if (s.autoPrompt) msgs.push(`<div class="msg you"><span class="who">Start</span><div class="body">${esc(s.autoPrompt.text)}</div></div>`);
     if (last) msgs.push(`<div class="msg"><span class="who">${esc(app)}</span><div class="body">${esc(last)}</div></div>`);
     if (msgs.length) out.push(`<div class="convo">${msgs.join('')}</div>`);
@@ -440,9 +440,9 @@
 
   function detailActions(s) {
     return `${openButton(s, true)}
-      <button type="button" class="btn" data-act="mark" data-sid="${esc(s.id)}">${needsReading(s) ? 'Markeer als gelezen' : 'Markeer als ongelezen'}</button>
+      <button type="button" class="btn" data-act="mark" data-sid="${esc(s.id)}">${needsReading(s) ? 'Mark as read' : 'Mark as unread'}</button>
       <span class="spacer"></span>
-      <button type="button" class="btn link" data-act="close" data-sid="${esc(s.id)}">Sluit sessie</button>`;
+      <button type="button" class="btn link" data-act="close" data-sid="${esc(s.id)}">Close session</button>`;
   }
 
   // Patch the children of a container to new HTML, so a session at work
@@ -492,7 +492,7 @@
   function byFolder(sessions) {
     const groups = new Map();
     for (const s of sessions) {
-      const f = s.folder || { key: '', name: 'Zonder map', detail: '' };
+      const f = s.folder || { key: '', name: 'No folder', detail: '' };
       let g = groups.get(f.key);
       if (!g) groups.set(f.key, (g = { key: f.key, name: f.name, detail: f.detail, items: [] }));
       g.items.push(s);
@@ -557,7 +557,7 @@
   // keyboard.
   const subsAttr = (r) => (r.subs ? ` data-subs="${esc(r.s.id)}" aria-expanded="${r.open}"` : '');
   const subToggle = (r) => (r.subs
-    ? `<span class="subchev${r.open ? ' open' : ''}" data-act="subfold" data-sub="${esc(r.s.id)}" title="${r.open ? 'Sub-taken inklappen' : 'Sub-taken tonen'}">${ICON_CHEVRON}</span>`
+    ? `<span class="subchev${r.open ? ' open' : ''}" data-act="subfold" data-sub="${esc(r.s.id)}" title="${r.open ? 'Hide subtasks' : 'Show subtasks'}">${ICON_CHEVRON}</span>`
     : '');
 
   // The line a folded session shows instead of its sub-tasks. Blue when one
@@ -569,7 +569,7 @@
     const key = 'x:' + r.sum.id;
     return {
       key,
-      html: `<button type="button" class="${cls} sub last subsum${hot ? ' hot' : ''}" data-key="${esc(key)}" data-act="subfold" data-sub="${esc(r.sum.id)}" aria-expanded="false"><span class="subn">${n} ${n === 1 ? 'sub-taak' : 'sub-taken'}</span>${sum ? `<span class="subsum-what">· ${esc(sum)}</span>` : ''}</button>`,
+      html: `<button type="button" class="${cls} sub last subsum${hot ? ' hot' : ''}" data-key="${esc(key)}" data-act="subfold" data-sub="${esc(r.sum.id)}" aria-expanded="false"><span class="subn">${n} ${n === 1 ? 'subtask' : 'subtasks'}</span>${sum ? `<span class="subsum-what">· ${esc(sum)}</span>` : ''}</button>`,
     };
   }
 
@@ -584,7 +584,7 @@
     const waiting = items.filter((s) => s.status === 'question' || s.status === 'permission').length;
     const working = items.filter((s) => s.status === 'working').length;
     const unseen = items.filter((s) => s.unread).length;
-    return [waiting && `${waiting} wacht`, working && `${working} bezig`, unseen && `${unseen} nieuw`].filter(Boolean).join(' · ');
+    return [waiting && `${waiting} waiting`, working && `${working} working`, unseen && `${unseen} new`].filter(Boolean).join(' · ');
   }
 
   // Folder headers and cards in one flat list, so renderList keeps patching
@@ -644,7 +644,7 @@
         : q.text.split('\n')[0];
     }
     const when = (s.question && s.question.ts) || (s.status === 'working' ? s.since : s.lastTs);
-    const tip = [s.title, s.project, s.app, s.unread ? 'nog niet bekeken' : st.label, s.question && s.question.text].filter(Boolean).join(' · ');
+    const tip = [s.title, s.project, s.app, s.unread ? 'not looked at yet' : st.label, s.question && s.question.text].filter(Boolean).join(' · ');
     const inner = `
       <span class="mdot"></span>
       <span class="mmain"><span class="mhead"><span class="mtitle">${esc(s.title)}</span>${subToggle(r)}</span>${sub ? `<span class="msub">${esc(sub)}</span>` : ''}</span>
@@ -652,7 +652,7 @@
       ${timeEl(when, 'compact')}`;
     const html = s.openUrl
       ? `<a class="mrow ${cls}" data-key="${esc(key)}" href="${esc(s.openUrl)}" data-act="open" data-sid="${esc(s.id)}"${subsAttr(r)} title="${esc(tip)}">${inner}</a>`
-      : `<button type="button" class="mrow ${cls}" data-key="${esc(key)}" data-act="copy" data-text="${esc(s.resumeCmd || '')}"${subsAttr(r)} title="${esc(tip)} · klik om het resume-commando te kopiëren">${inner}</button>`;
+      : `<button type="button" class="mrow ${cls}" data-key="${esc(key)}" data-act="copy" data-text="${esc(s.resumeCmd || '')}"${subsAttr(r)} title="${esc(tip)} · click to copy the resume command">${inner}</button>`;
     return { key, html };
   }
 
@@ -662,7 +662,7 @@
   const microPick = { q: null, w: null, d: null };
   const microCount = { q: 0, w: 0, d: 0 };
   const microFolders = { q: 0, w: 0, d: 0 };
-  const MICRO_WORD = { q: (n) => (n === 1 ? 'vraag' : 'vragen'), w: () => 'bezig', d: () => 'klaar' };
+  const MICRO_WORD = { q: (n) => (n === 1 ? 'question' : 'questions'), w: () => 'working', d: () => 'done' };
   const PICK = ((k) => (k in MICRO_WORD ? k : null))(new URLSearchParams(location.search).get('pick'));
 
   function renderMicro(lists) {
@@ -679,8 +679,8 @@
       tile.classList.toggle('one', !!one);
       tile.classList.toggle('many', list.length > 1);
       const what = `${list.length} ${word[k](list.length)}`;
-      const how = one ? (one.openUrl ? `Open “${one.title}”` : `Kopieer het resume-commando van “${one.title}”`)
-        : list.length > 1 ? 'Kies welke je opent' : '';
+      const how = one ? (one.openUrl ? `Open “${one.title}”` : `Copy the resume command of “${one.title}”`)
+        : list.length > 1 ? 'Pick the one to open' : '';
       // Also the word, for a strip that shows only the numbers.
       setTitle(tile, how ? `${what}. ${how}` : what);
       const label = how ? `${what}. ${how}` : what;
@@ -689,7 +689,7 @@
   }
 
   // The pick window: the sessions of one counter, kept live.
-  const PICK_NONE = { q: 'Geen open vragen meer.', w: 'Niets meer bezig.', d: 'Niets meer klaar.' };
+  const PICK_NONE = { q: 'No open questions left.', w: 'Nothing is working any more.', d: 'Nothing left to look at.' };
   function renderPick(list) {
     const what = `${list.length} ${MICRO_WORD[PICK](list.length)}`;
     setText($('#pick-label'), what);
@@ -722,11 +722,11 @@
     setHidden($('#mini-f-none'), flows.length > 0);
 
     const parts = [];
-    if (questions.length) parts.push(`<span class="hot">${questions.length} ${questions.length === 1 ? 'vraag' : 'vragen'}</span>`);
-    if (working) parts.push(`${working} bezig`);
+    if (questions.length) parts.push(`<span class="hot">${questions.length} ${questions.length === 1 ? 'question' : 'questions'}</span>`);
+    if (working) parts.push(`${working} working`);
     const unseen = sessions.filter((s) => s.unread).length;
-    if (unseen) parts.push(`<span class="new">${unseen} nieuw</span>`);
-    setHTML($('#mini-sum'), parts.length ? parts.join(' · ') : 'Alles rustig');
+    if (unseen) parts.push(`<span class="new">${unseen} new</span>`);
+    setHTML($('#mini-sum'), parts.length ? parts.join(' · ') : 'All quiet');
     for (const el of $$('[data-count="working"]')) setText(el, working);
   }
 
@@ -813,7 +813,7 @@
     const notice = $('#notice');
     if (!state.hooksSeen) {
       setHidden(notice, false);
-      if (!notice.innerHTML) notice.innerHTML = 'Nog geen hooks gezien, dus de status is een schatting. Installeer ze met <code>node install-hooks.js</code>.';
+      if (!notice.innerHTML) notice.innerHTML = 'No hooks seen yet, so the status is an estimate. Install them with <code>node install-hooks.js</code>.';
     } else {
       setHidden(notice, true);
     }
@@ -833,30 +833,30 @@
   // No numbers: what the bar says, and on hover why and what helps. An
   // expired login is renewed by itself; only an ended sign-in needs you.
   const LIMIT_PROBLEM = {
-    renewing: ['login vernieuwen…', 'De login van Claude Code was verlopen en wordt nu vernieuwd.'],
-    signin: ['opnieuw inloggen', 'Je inlog bij Claude Code is afgelopen. Log opnieuw in met claude auth login in de terminal.'],
-    expired: ['login verlopen', 'De login van Claude Code is verlopen. Start claude in de terminal om hem te vernieuwen.'],
-    offline: ['niet bereikbaar', 'De limieten zijn nu niet op te halen. Het wordt zo opnieuw geprobeerd.'],
-    busy: ['even geduld', 'Claude geeft de limieten even niet, omdat er vaak om gevraagd is. Het wordt vanzelf later opnieuw geprobeerd.'],
-    unknown: ['niet beschikbaar', 'Het antwoord met de limieten werd niet herkend.'],
+    renewing: ['renewing login…', 'Claude Code’s login had expired and is being renewed now.'],
+    signin: ['sign in again', 'Your Claude Code sign-in has ended. Sign in again with claude auth login in a terminal.'],
+    expired: ['login expired', 'Claude Code’s login has expired. Start claude in a terminal to renew it.'],
+    offline: ['unreachable', 'The limits cannot be fetched right now. It will try again shortly.'],
+    busy: ['hold on', 'Claude is not giving out the limits for a moment, as they were asked for often. It will try again later by itself.'],
+    unknown: ['unavailable', 'The answer with the limits was not recognised.'],
   };
   const limitProblem = (t) => (t.error === 'expired'
     ? (t.renew === 'busy' ? 'renewing' : t.renew === 'failed' ? 'signin' : 'expired')
     : t.error);
 
   function limitLabel(key) {
-    if (key === '5h') return '5 uur';
+    if (key === '5h') return '5 hours';
     if (key === 'week') return 'Week';
-    return `${Math.round(parseInt(key, 10) / 60) || 0} uur`;
+    return `${Math.round(parseInt(key, 10) / 60) || 0} hours`;
   }
 
   function resetText(ts) {
     if (!ts) return '';
     const d = new Date(ts);
-    const time = d.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
+    const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     return d.toDateString() === new Date().toDateString()
-      ? `reset om ${time}`
-      : `reset ${d.toLocaleDateString('nl-NL', { weekday: 'short' })} ${time}`;
+      ? `resets at ${time}`
+      : `resets ${d.toLocaleDateString('en-GB', { weekday: 'short' })} ${time}`;
   }
 
   const limitLevel = (pct) => (pct >= 90 ? 'high' : pct >= 75 ? 'warn' : '');
@@ -864,14 +864,14 @@
   function limitTool(t, label) {
     if (!t.windows.length) {
       const kind = limitProblem(t);
-      const [short, long] = LIMIT_PROBLEM[kind] || ['niet beschikbaar', 'Nog geen cijfers.'];
+      const [short, long] = LIMIT_PROBLEM[kind] || ['unavailable', 'No numbers yet.'];
       const why = `${t.name}: ${long}`;
       // Named after its tool here, so it is clear whose login it is.
       return `<div class="lim-tool off" role="img" aria-label="${esc(why)}" title="${esc(why)}"><span class="lim-name">${esc(t.name)}</span><span class="lim-off ${kind || ''}">${esc(short)}</span></div>`;
     }
     const wins = t.windows.map((w) => ({ ...w, pct: Math.round(w.pct) }));
-    const lines = wins.map((w) => `${limitLabel(w.key)}: ${w.pct}% gebruikt${w.resetsAt ? `, ${resetText(w.resetsAt)}` : ''}`);
-    if (t.at && Date.now() - t.at > 30 * 60000) lines.push(`Gemeten ${ago(t.at)}`);
+    const lines = wins.map((w) => `${limitLabel(w.key)}: ${w.pct}% used${w.resetsAt ? `, ${resetText(w.resetsAt)}` : ''}`);
+    if (t.at && Date.now() - t.at > 30 * 60000) lines.push(`Measured ${ago(t.at)}`);
     const tracks = wins.map((w) => `<span class="lim-track ${limitLevel(w.pct)}"><span class="lim-fill" data-p="${w.pct}"></span></span>`).join('');
     const nums = wins.map((w) => `<span class="lim-pct ${limitLevel(w.pct)}">${w.pct}%</span>`).join('<span class="lim-sep">/</span>');
     // The full view has room to spell it out: per limit its name, when it
@@ -885,7 +885,7 @@
 
   function renderLimits() {
     const list = state && Array.isArray(state.limits) ? state.limits : [];
-    const html = list.map((t) => limitTool(t, list.length === 1 ? 'Limiet' : t.name)).join('');
+    const html = list.map((t) => limitTool(t, list.length === 1 ? 'Limits' : t.name)).join('');
     for (const el of [limitsEl, microLimEl]) {
       setHTML(el, html);
       // Widths through the style object: the page's CSP blocks style attributes.
@@ -922,10 +922,10 @@
     const ml = $('#mini-live');
     ml.classList.toggle('ok', ok);
     ml.classList.toggle('bad', !ok);
-    setTitle(ml, ok ? 'Live verbonden' : 'Geen verbinding met de server');
+    setTitle(ml, ok ? 'Live, connected' : 'No connection to the server');
     setText($('#live-text'), !ok
-      ? 'Geen verbinding met de server'
-      : state && state.hooksSeen ? 'Live via hooks' : 'Live · schatting uit transcripts');
+      ? 'No connection to the server'
+      : state && state.hooksSeen ? 'Live via hooks' : 'Live · estimated from transcripts');
   }
 
   // ---------------------------------------------------------------- actions
@@ -950,8 +950,8 @@
     const close = document.createElement('button');
     close.type = 'button';
     close.className = 'toast-close';
-    close.setAttribute('aria-label', 'Sluiten');
-    close.title = 'Sluiten';
+    close.setAttribute('aria-label', 'Close');
+    close.title = 'Close';
     close.innerHTML = ICON_CLOSE;
     close.addEventListener('click', hideToast, { once: true });
     t.replaceChildren(msg, close);
@@ -1036,7 +1036,7 @@
     lockPage(open && mini);
     settingsPanel.hidden = !open;
     settingsButton.setAttribute('aria-expanded', String(open));
-    setTitle(settingsButton, open && mini ? 'Sluiten' : 'Instellingen');
+    setTitle(settingsButton, open && mini ? 'Close' : 'Settings');
     if (!open) return;
     syncSettings();
     if (mini) {
@@ -1096,23 +1096,23 @@
       syncSettings();
       if ('toolLabels' in change) {
         render();
-        toast(d.toolLabels ? 'AI-tool zichtbaar.' : 'AI-tool verborgen.');
+        toast(d.toolLabels ? 'AI tool shown.' : 'AI tool hidden.');
         return;
       }
       if ('miniOnTop' in change) {
-        toast(d.miniOnTop ? 'Mini-venster blijft bovenaan.' : 'Mini-venster wordt een gewoon venster.');
+        toast(d.miniOnTop ? 'Mini window stays on top.' : 'Mini window becomes an ordinary window.');
         return;
       }
       if ('limits' in change) {
         render();
         const [tool] = Object.keys(change.limits);
-        toast(`${tool === 'codex' ? 'Codex' : 'Claude'}-limieten ${d.limits[tool] ? 'aan' : 'uit'}.`);
+        toast(`${tool === 'codex' ? 'Codex' : 'Claude'} limits ${d.limits[tool] ? 'on' : 'off'}.`);
         return;
       }
-      toast(d.openVia === 'browser' ? 'Opent via je browser.' : 'Opent zonder vraag.');
+      toast(d.openVia === 'browser' ? 'Opens through your browser.' : 'Opens without asking.');
     } catch {
       syncSettings();
-      toast('Opslaan mislukt.');
+      toast('Could not save.');
     }
   });
 
@@ -1135,7 +1135,7 @@
     const open = ctx.querySelector('[data-ctx="open"]');
     open.hidden = !s.openUrl;
     setText(open, `Open in ${appOf(s)}`);
-    setText(ctx.querySelector('[data-ctx="mark"]'), needsReading(s) ? 'Markeer als gelezen' : 'Markeer als ongelezen');
+    setText(ctx.querySelector('[data-ctx="mark"]'), needsReading(s) ? 'Mark as read' : 'Mark as unread');
     ctx.hidden = false;
     const r = ctx.getBoundingClientRect();
     ctx.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 4))}px`;
@@ -1157,17 +1157,17 @@
       if (kind === 'closed') {
         if (state) state.sessions = (state.sessions || []).filter((x) => x.id !== s.id);
         render();
-        toast(`“${s.title}” gesloten.`, { label: 'Ongedaan maken', run: () => markSession(s, 'open') });
+        toast(`“${s.title}” closed.`, { label: 'Undo', run: () => markSession(s, 'open') });
         return;
       }
-      if (kind === 'open') { toast('Teruggezet.'); return; }
+      if (kind === 'open') { toast('Restored.'); return; }
       const unread = kind === 'unread';
       if (!unread && (s.status === 'question' || s.status === 'permission')) { s.status = 'done'; s.question = null; }
       s.unread = unread && !['working', 'permission', 'question'].includes(s.status);
       render();
-      toast(unread ? 'Gemarkeerd als ongelezen.' : 'Gemarkeerd als gelezen.');
+      toast(unread ? 'Marked as unread.' : 'Marked as read.');
     } catch {
-      toast('Kon de markering niet opslaan.');
+      toast('Could not save the mark.');
     }
   }
 
@@ -1218,14 +1218,14 @@
       const text = cleanAnswer(el.dataset.text);
       await copy(text);
       if (s && s.openUrl) {
-        toast(`“${text}” gekopieerd. Plak met ⌘V.`);
+        toast(`“${text}” copied. Paste with ⌘V.`);
         openSession(s);
       } else {
-        toast(`“${text}” gekopieerd.`);
+        toast(`“${text}” copied.`);
       }
     } else if (act === 'copy') {
       await copy(String(el.dataset.text).replace(INVISIBLE, ''));
-      toast('Gekopieerd. Plak in je terminal.');
+      toast('Copied. Paste it in your terminal.');
       if (PICK && el.closest('#pick-list')) setTimeout(() => window.close(), 1200);
     } else if (act === 'fold') {
       toggleFolder(el.dataset.fold);
@@ -1306,9 +1306,9 @@
     bell.setAttribute('aria-pressed', String(on));
     bell.disabled = !available;
     setTitle(bell, available
-      ? (on ? 'Meldingen staan aan' : 'Meldingen aanzetten')
-      : 'Bouw eerst het meldingsappje: notifier/build.sh');
-    setText($('#bell-text'), on ? 'Meldingen aan' : 'Meldingen uit');
+      ? (on ? 'Notifications are on' : 'Turn notifications on')
+      : 'Build the notifier first: notifier/build.sh');
+    setText($('#bell-text'), on ? 'Notifications on' : 'Notifications off');
   }
   $('#bell').addEventListener('click', async () => {
     if (!state) return;
@@ -1322,9 +1322,9 @@
       const d = await r.json();
       state.notify = d.notify;
       syncBell();
-      toast(d.notify ? 'Meldingen aan.' : 'Meldingen uit.');
+      toast(d.notify ? 'Notifications on.' : 'Notifications off.');
     } catch {
-      toast('Opslaan mislukt.');
+      toast('Could not save.');
     }
   });
 
@@ -1375,8 +1375,8 @@
     }
     // Full view in a narrow window: the mini button switches back in place.
     const back = !mini && narrowQuery.matches;
-    openMini.title = back ? 'Terug naar de mini-weergave' : 'Mini-venster openen';
-    openMini.setAttribute('aria-label', back ? 'Terug naar de mini-weergave' : 'Mini-venster');
+    openMini.title = back ? 'Back to the mini view' : 'Open the mini window';
+    openMini.setAttribute('aria-label', back ? 'Back to the mini view' : 'Mini window');
   }
   narrowQuery.addEventListener('change', () => { setShowFull(false); applyMode(); });
 
@@ -1438,7 +1438,7 @@
     if (s && s.openUrl) { openSession(s); return; }
     if (s && s.resumeCmd) {
       await copy(String(s.resumeCmd).replace(INVISIBLE, ''));
-      toast('Gekopieerd. Plak in je terminal.');
+      toast('Copied. Paste it in your terminal.');
       return;
     }
     if (tile && microCount[k] > 1 && openPick(k)) return;
@@ -1513,7 +1513,7 @@
     if (top && await top) return;
     // An ordinary dashboard window, only small: that makes it the mini view.
     const w = window.open('/', 'ai-flows-mini', 'popup=yes,width=320,height=460');
-    if (!w) toast('Venster geblokkeerd. Sta pop-ups toe voor 127.0.0.1:4777.');
+    if (!w) toast('Window blocked. Allow pop-ups for 127.0.0.1:4777.');
   });
 
   // ---------------------------------------------------------------- data
