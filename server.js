@@ -249,7 +249,12 @@ function deriveFromEvents(events) {
     'PermissionRequest', 'PermissionDenied', 'Stop', 'StopFailure', 'SessionEnd']);
 
   for (const e of events) {
-    st.lastTs = Math.max(st.lastTs, e.ts);
+    // A session starting or ending is not work in it: closing the app ends
+    // every open session at once, which would make them all look active just
+    // now. Nor is the reminder that it waits for input.
+    const quiet = e.ev === 'SessionStart' || e.ev === 'SessionEnd' ||
+      (e.ev === 'Notification' && e.ntype !== 'permission_prompt' && e.ntype !== 'elicitation_dialog');
+    if (!quiet) st.lastTs = Math.max(st.lastTs, e.ts);
     if (e.aid) {
       if (e.ev === 'SubagentStart') st.subagents.set(e.aid, { type: e.atype || 'agent', ts: e.ts, activity: null });
       else if (e.ev === 'SubagentStop') st.subagents.delete(e.aid);
@@ -395,7 +400,9 @@ function deriveFromTranscript(tail) {
     if (e.entrypoint) st.entry = e.entrypoint;
     if (e.isSidechain) continue;
     const ts = e.timestamp ? Date.parse(e.timestamp) : null;
-    if (ts) st.lastTs = Math.max(st.lastTs, ts);
+    // Only messages count as activity: the app also writes bookkeeping lines
+    // with a time (queue operations, for one, when it closes every session).
+    if (ts && (e.type === 'user' || e.type === 'assistant')) st.lastTs = Math.max(st.lastTs, ts);
 
     if (e.type === 'user' && e.message) {
       const text = userText(e.message);
@@ -1329,7 +1336,7 @@ function buildSession(sid) {
   // Real message times only: the app keeps touching transcript files (cost,
   // title) long after the last message, so file dates overstate activity.
   const lastTs = Math.max(st.lastTs || 0, (fromTr && fromTr.lastTs) || 0, (fromHooks && fromHooks.lastTs) || 0) ||
-    (tail && tail.mtimeMs) || (tr && tr.mtimeMs) || 0;
+    (desk && desk.lastActivityAt) || (tail && tail.mtimeMs) || (tr && tr.mtimeMs) || 0;
   let status = st.status;
   let since = st.since || lastTs;
   // A permission prompt in the middle of a turn should not restart its clock.
