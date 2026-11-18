@@ -432,7 +432,11 @@ resets, a bar and the percentage; with two tools that do not fit on one line,
 one line per tool. The mini view has one small meter per tool, with a thick
 bar for the 5 hours over a thin one for the week, and both percentages
 (`21% / 45%`); hover it for the reset times. A bar turns orange from 75% and
-red from 90%. In a narrow mini view the meters go one per row;
+red from 90%. A limit that is used up shows, instead of 100%, how long
+until it resets (`1h 12m`, with a small clock), and over its red bar a lighter
+one for the part of the wait that has passed, so the red shrinks towards the
+reset; both count down by themselves. Where the room is short, the other
+number gives way to that wait. In a narrow mini view the meters go one per row;
 the micro view has them on a line of their own, or at the end of its strip. Each tool has its own switch under
 **Settings → Limits** (both on by default).
 

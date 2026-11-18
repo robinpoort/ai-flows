@@ -4,6 +4,7 @@
 :root {
   --bg: #f4f7ff;            /* --sp-bg-sunken */
   --surface: #ffffff;       /* --sp-bg */
+  --lim-wait: rgb(255 255 255 / .62);
   --surface-2: #f4f7ff;     /* --sp-bg-sunken */
   --text: #00053f;          /* --sp-fg */
   --muted: #575d80;         /* --sp-fg-muted */
@@ -35,6 +36,7 @@
   :root {
     --bg: #181a23;          /* --sp-bg */
     --surface: #212533;     /* --sp-bg-sunken */
+    --lim-wait: rgb(255 255 255 / .45);
     --surface-2: #181a23;
     --text: #e9ebf5;
     --muted: #979ebb;
@@ -576,6 +578,19 @@ body { padding-bottom: var(--lim, 0px); }
 .lim-fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: inherit; background: var(--accent); }
 .lim-track.warn .lim-fill { background: var(--amber-fill); }
 .lim-track.high .lim-fill { background: var(--red); }
+/* Used up: over the red, the part of the wait that has passed (app.js). */
+.lim-wait { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: inherit; background: var(--lim-wait); }
+.lim-clock { width: .95em; height: .95em; margin-right: .2em; vertical-align: -.12em; }
+/* Short of room: a used-up limit keeps its wait, the other number goes (its
+   bar and the tooltip still have it). */
+@media (max-width: 219px) {
+  body.is-mini .lim-nums:has(.lim-clock) > .lim-sep,
+  body.is-mini .lim-nums:has(.lim-clock) > .lim-pct:not(:has(.lim-clock)) { display: none; }
+}
+@media (max-height: 71px) and (max-width: 399px) {
+  .micro-lim .lim-nums:has(.lim-clock) > .lim-sep,
+  .micro-lim .lim-nums:has(.lim-clock) > .lim-pct:not(:has(.lim-clock)) { display: none; }
+}
 .lim-nums { display: flex; align-items: baseline; gap: 3px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .lim-pct { font-weight: 600; color: var(--text); }
 .lim-sep { color: var(--faint); }
@@ -595,7 +610,7 @@ body:not(.is-mini) .lim-name { font-size: 13.5px; }
 body:not(.is-mini) .lim-tool:not(.off) .lim-meter,
 body:not(.is-mini) .lim-tool:not(.off) .lim-nums { display: none; }
 body:not(.is-mini) .lim-wins { display: flex; gap: 22px; }
-.lim-win { display: grid; gap: 5px; width: 200px; }
+.lim-win { display: grid; gap: 5px; width: 240px; }
 .lim-wtop { display: flex; align-items: baseline; gap: 7px; min-width: 0; white-space: nowrap; }
 .lim-wname { font-weight: 600; color: var(--text); }
 .lim-reset { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--faint); }
@@ -1092,6 +1107,7 @@ body.is-mini .micro-lim .lim-meter { min-width: 24px; }
 @media (max-height: 71px) and (max-width: 179px) {
   .micro-lim .lim-sep,
   .micro-lim .lim-sep + .lim-pct { display: none; }
+  .micro-lim .lim-clock { display: none; }
 }
 @media (max-height: 35px) {
   body.is-mini .mini-micro { gap: 3px; padding: 3px; }

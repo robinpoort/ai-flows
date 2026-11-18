@@ -861,6 +861,28 @@
 
   const limitLevel = (pct) => (pct >= 90 ? 'high' : pct >= 75 ? 'warn' : '');
 
+  // A limit that is used up: instead of "100%" the time until it resets, and
+  // over its red bar a lighter one for the part of the wait that has passed,
+  // so the red shrinks towards the reset.
+  const ICON_CLOCK = '<svg class="lim-clock" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 4.8V8l2.2 1.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const windowMs = (key) => (key === '5h' ? 5 * 3600000 : key === 'week' ? 7 * 86400000 : (parseInt(key, 10) || 0) * 60000);
+  const usedUp = (w) => w.pct >= 100 && w.resetsAt && w.resetsAt > Date.now();
+  function untilText(ts) {
+    const m = Math.max(1, Math.ceil((ts - Date.now()) / 60000));
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h${m % 60 ? ` ${m % 60}m` : ''}`;
+    return `${Math.floor(h / 24)}d${h % 24 ? ` ${h % 24}h` : ''}`;
+  }
+  const waited = (w) => {
+    const len = windowMs(w.key);
+    return len ? Math.round(Math.max(0, Math.min(1, 1 - (w.resetsAt - Date.now()) / len)) * 1000) / 10 : 0;
+  };
+  // The bar, and the number or the wait, for one limit.
+  const limitTrack = (w) => `<span class="lim-track ${limitLevel(w.pct)}"><span class="lim-fill" data-p="${w.pct}"></span>` +
+    `${usedUp(w) ? `<span class="lim-wait" data-p="${waited(w)}"></span>` : ''}</span>`;
+  const limitValue = (w) => (usedUp(w) ? `${ICON_CLOCK}${untilText(w.resetsAt)}` : `${w.pct}%`);
+
   function limitTool(t, label) {
     if (!t.windows.length) {
       const kind = limitProblem(t);
@@ -870,15 +892,15 @@
       return `<div class="lim-tool off" role="img" aria-label="${esc(why)}" title="${esc(why)}"><span class="lim-name">${esc(t.name)}</span><span class="lim-off ${kind || ''}">${esc(short)}</span></div>`;
     }
     const wins = t.windows.map((w) => ({ ...w, pct: Math.round(w.pct) }));
-    const lines = wins.map((w) => `${limitLabel(w.key)}: ${w.pct}% used${w.resetsAt ? `, ${resetText(w.resetsAt)}` : ''}`);
+    const lines = wins.map((w) => `${limitLabel(w.key)}: ${usedUp(w) ? `used up, back in ${untilText(w.resetsAt)}` : `${w.pct}% used`}${w.resetsAt ? `, ${resetText(w.resetsAt)}` : ''}`);
     if (t.at && Date.now() - t.at > 30 * 60000) lines.push(`Measured ${ago(t.at)}`);
-    const tracks = wins.map((w) => `<span class="lim-track ${limitLevel(w.pct)}"><span class="lim-fill" data-p="${w.pct}"></span></span>`).join('');
-    const nums = wins.map((w) => `<span class="lim-pct ${limitLevel(w.pct)}">${w.pct}%</span>`).join('<span class="lim-sep">/</span>');
+    const tracks = wins.map(limitTrack).join('');
+    const nums = wins.map((w) => `<span class="lim-pct ${limitLevel(w.pct)}">${limitValue(w)}</span>`).join('<span class="lim-sep">/</span>');
     // The full view has room to spell it out: per limit its name, when it
     // resets, a bigger bar and the percentage (see app.css).
     const cards = wins.map((w) => `<span class="lim-win"><span class="lim-wtop"><span class="lim-wname">${esc(limitLabel(w.key))}</span>` +
-      `${w.resetsAt ? `<span class="lim-reset">${esc(resetText(w.resetsAt))}</span>` : ''}<span class="lim-wpct ${limitLevel(w.pct)}">${w.pct}%</span></span>` +
-      `<span class="lim-track ${limitLevel(w.pct)}"><span class="lim-fill" data-p="${w.pct}"></span></span></span>`).join('');
+      `${w.resetsAt ? `<span class="lim-reset">${esc(resetText(w.resetsAt))}</span>` : ''}<span class="lim-wpct ${limitLevel(w.pct)}">${limitValue(w)}</span></span>` +
+      `${limitTrack(w)}</span>`).join('');
     return `<div class="lim-tool" role="img" aria-label="${esc(`${t.name}. ${lines.join('. ')}`)}" title="${esc([t.name, ...lines].join('\n'))}">` +
       `<span class="lim-name">${esc(label)}</span><span class="lim-meter">${tracks}</span><span class="lim-nums">${nums}</span><span class="lim-wins">${cards}</span></div>`;
   }
@@ -889,7 +911,7 @@
     for (const el of [limitsEl, microLimEl]) {
       setHTML(el, html);
       // Widths through the style object: the page's CSP blocks style attributes.
-      for (const f of $$('.lim-fill', el)) f.style.width = `${f.dataset.p}%`;
+      for (const f of $$('.lim-fill, .lim-wait', el)) f.style.width = `${f.dataset.p}%`;
       setHidden(el, list.length === 0);
     }
     syncLimitsHeight();
@@ -1571,4 +1593,6 @@
     showUnlockError(true);
   })();
   setInterval(() => updateTimes(), 15000);
+  // The wait for a used-up limit counts down.
+  setInterval(() => { if (state && (state.limits || []).some((t) => t.windows.some(usedUp))) renderLimits(); }, 30000);
 })();
