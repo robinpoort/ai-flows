@@ -290,11 +290,18 @@ How is a setting (**Settings** in the header):
 A click on a notification always brings Claude forward without asking: the
 helper hands over the focus (`yieldActivation`).
 
-**Read and unread.** A finished answer you have not opened in Claude yet gets
-a blue dot. Right-click a session (in the list or a mini row), or use the
-button under the open session, to mark it unread
-(it stays blue until you open it in Claude) or read (also for one that stays
-blue when it should not). Marks are kept in `~/.claude/ai-flows/marks.json`.
+**Read and unread.** A session that finished a turn gets a blue dot, and it
+stays blue until you open it: in Claude (the app notes when you click a
+session), with a click on it in AI Flows (opening it or copying its resume
+command), with **Mark as read**, or by sending it something new. So blue is
+what you have not looked at yet, also once the app has ended the session in
+the meantime. With the Claude app in front and that session open, it counts as
+seen once it has been in view for a few seconds after it finished; passing it
+on the way to another session does not count. Terminal and Codex sessions have
+no app that tells AI Flows you looked, so for them the click here, the mark or
+a new message is what counts. Right-click a session (in the list or a mini
+row), or use the button under the open session, to mark it unread or read.
+Marks are kept in `~/.claude/ai-flows/marks.json`.
 
 **Folders and hiding.** Every session names the folder it was started in
 (for the Claude app its `originCwd`; a worktree counts as its repository, and a
@@ -405,9 +412,9 @@ Codex sessions show **Codex app** or **Codex CLI** with their name and
 **Open in Codex**, which opens `codex://threads/<id>` in the app; CLI threads
 offer a `codex resume` command to copy instead. **Settings → Display →
 Show the AI tool** (off by default) adds a Claude or Codex label to each
-session: in the list, the open session, the mini view and the pick window. Read and unread work
-through the right-click menu, as for terminal sessions: Codex records no
-"seen" moment the dashboard can read.
+session: in the list, the open session, the mini view and the pick window. A
+finished Codex turn turns blue as for terminal sessions (see Read and unread):
+Codex records no "seen" moment the dashboard can read.
 
 Another tool fits in the same way: a scan that finds its conversations, a
 reader that turns one into a status, and a session in the shape the server

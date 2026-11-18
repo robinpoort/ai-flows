@@ -900,8 +900,13 @@ function buildCodexSession(t) {
     };
   }
 
+  // As for Claude: blue from a finished turn until you open it from AI Flows,
+  // mark it read or send it something new (Codex records no "seen" moment).
   const mark = marks.get(sid) || {};
-  let unread = !!(mark.unread && mark.unread > (mark.read || 0)) && !['working', 'permission', 'question'].includes(status);
+  const finishedAt = st && (status === 'done' || status === 'error') ? ((st.last && st.last.ts) || since || 0) : 0;
+  const seen = Math.max(mark.read || 0, (st && st.prompt && st.prompt.ts) || 0);
+  let unread = ((!!finishedAt && finishedAt > seen) || !!(mark.unread && mark.unread > seen))
+    && !['working', 'permission', 'question'].includes(status);
   if (question && mark.read && mark.read >= (question.ts || since || 0)) {
     question = null;
     status = 'done';
@@ -951,8 +956,12 @@ function buildCodexSession(t) {
 }
 
 // When you last saw each session's answer: the app records when you focused a
-// session; this adds "it finished while you were looking at it".
+// session; this adds "it finished while you were looking at it". Open in the
+// app in front only counts once it has been in view for a moment after it
+// finished: passing it on the way to another session is not looking at it.
 const seenAt = new Map(); // sid -> ms
+const viewStart = new Map(); // sid -> ms since it is open in the app in front
+const SEEN_DWELL = 8 * 1000;
 
 // Your own marks from the dashboard's right-click menu: { sid: { unread, read,
 // closed } } (times in ms). "Unread" lasts until you open the session in
@@ -1338,14 +1347,23 @@ function buildSession(sid) {
     : [];
   let activity = st.activity;
   let background = false;
-  // A finished answer you have not looked at yet (desktop sessions only: the
-  // app is what knows when you focused one).
-  let unread = false;
+  // A finished answer you have not looked at yet stays blue until you open
+  // it: in Claude (the app notes when you focus a session), from AI Flows, with
+  // "Mark as read" or by sending it something new. Also once the app has
+  // ended the session in the meantime. Terminal sessions have no app to say
+  // you looked, so for them only the last three count.
   const mark = marks.get(sid) || {};
-  if (desk && claudeInFront && desk.localId === focusedLocalId) seenAt.set(sid, Date.now());
-  const opened = desk ? Math.max(desk.lastFocusedAt || 0, seenAt.get(sid) || 0) : 0;
-  if (desk) unread = (st.status === 'done' || st.status === 'error') && (since || 0) > Math.max(opened, mark.read || 0);
-  if (mark.unread && mark.unread > Math.max(opened, mark.read || 0)) unread = true;
+  const finishedAt = status === 'done' || status === 'error' ? (since || 0)
+    : status === 'ended' ? ((st.last && st.last.ts) || 0) : 0;
+  if (desk && claudeInFront && desk.localId === focusedLocalId) {
+    if (!viewStart.has(sid)) viewStart.set(sid, Date.now());
+    if (finishedAt && Date.now() - Math.max(viewStart.get(sid), finishedAt) >= SEEN_DWELL) seenAt.set(sid, Date.now());
+  } else {
+    viewStart.delete(sid);
+  }
+  const opened = Math.max((desk && desk.lastFocusedAt) || 0, seenAt.get(sid) || 0, mark.read || 0, (st.prompt && st.prompt.ts) || 0);
+  let unread = !!finishedAt && finishedAt > opened;
+  if (mark.unread && mark.unread > opened) unread = true;
 
   if (busySubs.length && ['done', 'idle', 'interrupted', 'stale'].includes(status)) {
     status = 'working';

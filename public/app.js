@@ -243,7 +243,7 @@
       return `<a class="btn ${primary ? 'primary' : ''}" href="${esc(s.openUrl)}" data-act="open" data-sid="${esc(s.id)}">${ICON_OPEN}Open in ${esc(appOf(s))}</a>`;
     }
     if (s.resumeCmd) {
-      return `<button type="button" class="btn ${primary ? 'primary' : ''}" data-act="copy" data-text="${esc(s.resumeCmd)}" title="${esc(s.resumeCmd)}">${ICON_COPY}Copy resume command</button>`;
+      return `<button type="button" class="btn ${primary ? 'primary' : ''}" data-act="copy" data-sid="${esc(s.id)}" data-text="${esc(s.resumeCmd)}" title="${esc(s.resumeCmd)}">${ICON_COPY}Copy resume command</button>`;
     }
     return '';
   }
@@ -311,7 +311,7 @@
     const open = s.openUrl
       ? `<a class="srow-open" href="${esc(s.openUrl)}" data-act="open" data-sid="${esc(s.id)}" title="Open in ${esc(app)}" aria-label="${esc(`Open ${s.title} in ${app}`)}">${ICON_OPEN}</a>`
       : s.resumeCmd
-        ? `<button type="button" class="srow-open" data-act="copy" data-text="${esc(s.resumeCmd)}" title="Copy resume command" aria-label="${esc(`Copy the resume command of ${s.title}`)}">${ICON_COPY}</button>`
+        ? `<button type="button" class="srow-open" data-act="copy" data-sid="${esc(s.id)}" data-text="${esc(s.resumeCmd)}" title="Copy resume command" aria-label="${esc(`Copy the resume command of ${s.title}`)}">${ICON_COPY}</button>`
         // Nothing to open: keep its place, so the times stay in one column.
         : '<span class="srow-open none" aria-hidden="true"></span>';
     return {
@@ -481,6 +481,19 @@
   // Blue means "look at me": an unseen answer, or a question. Both can be
   // marked read, which turns them grey.
   function needsReading(s) { return s.unread || s.status === 'question' || s.status === 'permission'; }
+
+  // Opened from AI Flows: you have seen it, so it is no longer new. Not for one
+  // that asks something: "read" would set its question aside.
+  function seenHere(s) {
+    if (!s || !s.unread || ['question', 'permission', 'working'].includes(s.status)) return;
+    s.unread = false;
+    render();
+    fetch('/api/mark', {
+      method: 'POST',
+      headers: apiHeaders({ 'X-AI-Flows': '1', 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ id: s.id, mark: 'read' }),
+    }).catch(() => {});
+  }
 
   // ---------------------------------------------------------------- folders
 
@@ -652,7 +665,7 @@
       ${timeEl(when, 'compact')}`;
     const html = s.openUrl
       ? `<a class="mrow ${cls}" data-key="${esc(key)}" href="${esc(s.openUrl)}" data-act="open" data-sid="${esc(s.id)}"${subsAttr(r)} title="${esc(tip)}">${inner}</a>`
-      : `<button type="button" class="mrow ${cls}" data-key="${esc(key)}" data-act="copy" data-text="${esc(s.resumeCmd || '')}"${subsAttr(r)} title="${esc(tip)} · click to copy the resume command">${inner}</button>`;
+      : `<button type="button" class="mrow ${cls}" data-key="${esc(key)}" data-act="copy" data-sid="${esc(s.id)}" data-text="${esc(s.resumeCmd || '')}"${subsAttr(r)} title="${esc(tip)} · click to copy the resume command">${inner}</button>`;
     return { key, html };
   }
 
@@ -1209,7 +1222,7 @@
     const s = find(ctxSid);
     closeCtx();
     if (!s) return;
-    if (b.dataset.ctx === 'open') openSession(s);
+    if (b.dataset.ctx === 'open') { seenHere(s); openSession(s); }
     else if (b.dataset.ctx === 'close') markSession(s, 'closed');
     else markSession(s, needsReading(s) ? 'read' : 'unread');
   });
@@ -1244,6 +1257,7 @@
     const act = el.dataset.act;
     if (act === 'open') {
       e.preventDefault();
+      seenHere(find(el.dataset.sid));
       await openSession(find(el.dataset.sid));
       // Picked from the pick window: done with it.
       if (PICK) setTimeout(() => window.close(), 300);
@@ -1258,6 +1272,7 @@
         toast(`“${text}” copied.`);
       }
     } else if (act === 'copy') {
+      seenHere(find(el.dataset.sid));
       await copy(String(el.dataset.text).replace(INVISIBLE, ''));
       toast('Copied. Paste it in your terminal.');
       if (PICK && el.closest('#pick-list')) setTimeout(() => window.close(), 1200);
@@ -1469,8 +1484,9 @@
       if (pickWin && !pickWin.closed) pickWin.close();
       return;
     }
-    if (s && s.openUrl) { openSession(s); return; }
+    if (s && s.openUrl) { seenHere(s); openSession(s); return; }
     if (s && s.resumeCmd) {
+      seenHere(s);
       await copy(String(s.resumeCmd).replace(INVISIBLE, ''));
       toast('Copied. Paste it in your terminal.');
       return;
