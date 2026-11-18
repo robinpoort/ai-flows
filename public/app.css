@@ -931,7 +931,9 @@ body.is-mini #settings-button[aria-expanded="true"] .icon-close { display: block
 .mrow.unread .mtitle { font-weight: 600; color: var(--text); }
 .mini-sum .new { color: var(--accent-text); }
 
-/* micro: just the counters when there is barely any room */
+/* micro: just the counters, with the limits on a line of their own, when
+   there is barely any room. Each counter fits its number and word to its own
+   box (container query units), whatever room the limits leave it. */
 .mini-micro { display: none; }
 @media (max-width: 219px), (max-height: 159px) {
   html:has(body.is-mini) { overflow: hidden; }
@@ -941,20 +943,21 @@ body.is-mini #settings-button[aria-expanded="true"] .icon-close { display: block
   body.is-mini .mini-micro {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: minmax(0, 1fr);
     gap: 6px;
-    min-height: 100vh;
+    height: 100vh;
     padding: 6px;
     cursor: pointer;
   }
   body.auto-mini .mini-micro { cursor: default; }
   .micro {
+    container-type: size;
     position: relative;
     min-width: 0;
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 0;
+    padding: 0 4px;
     border: 0;
     border-radius: 10px;
     background: var(--gray-soft);
@@ -962,6 +965,7 @@ body.is-mini #settings-button[aria-expanded="true"] .icon-close { display: block
     font: inherit;
     cursor: inherit;
   }
+  .micro .mi { display: flex; flex-direction: column; align-items: center; min-width: 0; max-width: 100%; }
   .micro:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   /* One session behind it: it opens that one, and says so with a small arrow. */
   .micro .go { display: none; position: absolute; top: 5px; right: 5px; width: 12px; height: 12px; opacity: .75; }
@@ -970,19 +974,90 @@ body.is-mini #settings-button[aria-expanded="true"] .icon-close { display: block
   .micro.one .go { display: block; }
   .micro.one:hover { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, currentColor 40%, transparent); }
   .micro.one:active { transform: translateY(1px); }
-  .micro strong { font-size: clamp(20px, 22vmin, 44px); line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
-  .micro .what { font-size: 11px; margin-top: 2px; }
+  .micro strong { font-size: clamp(16px, min(40cqh, 50cqw), 44px); line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
+  .micro .what { font-size: 11px; line-height: 13px; margin-top: 2px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .micro.q.hot { background: var(--accent); color: color-mix(in srgb, var(--on-accent) 85%, transparent); }
   .micro.q.hot strong { color: var(--on-accent); }
   .micro.w.hot { background: var(--green-soft); color: var(--green); }
   .micro.w.hot strong { color: var(--green); }
   .micro.d.hot { background: var(--accent-soft); color: var(--accent-text); }
   .micro.d.hot strong { color: var(--accent-text); }
-  .micro .what { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Too low for the number over the word: one line. */
+  @container (max-height: 43px) {
+    .micro .mi { flex-direction: row; align-items: baseline; gap: 4px; }
+    .micro strong { font-size: clamp(12px, 55cqh, 20px); }
+    .micro .what { margin-top: 0; }
+    .micro .go { position: static; align-self: center; flex: none; width: 10px; height: 10px; }
+  }
+  /* Too narrow for the word: the number only; colour and tooltip tell them apart. */
+  @container (max-height: 43px) and (max-width: 57px) { .micro .what { display: none; } }
+  @container (max-width: 39px) { .micro .what { display: none; } }
+  @container (max-width: 25px) { .micro.one .go { display: none; } }
+
+  /* The limits: the same meters as at the bottom of the mini view, on a line
+     under the counters. */
+  .micro-lim {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 2px 14px;
+    min-width: 0;
+    padding: 0 4px;
+    font-size: 11px;
+    line-height: 14px;
+    color: var(--muted);
+  }
+  .micro-lim .lim-off { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  body.is-mini .micro-lim .lim-meter { min-width: 24px; }
 }
-/* Too narrow for three side by side: one above the other. */
-@media (max-width: 159px) {
-  body.is-mini .mini-micro { grid-template-columns: minmax(0, 1fr); }
+/* Too narrow for three side by side, and tall enough: one above the other. */
+@media (max-width: 159px) and (min-height: 100px) {
+  body.is-mini .mini-micro { grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 219px) {
+  .micro-lim .lim-name { display: none; }
+}
+@media (max-width: 119px) {
+  .micro-lim .lim-meter { display: none; }
+}
+@media (max-width: 79px) {
+  .micro-lim .lim-sep,
+  .micro-lim .lim-sep + .lim-pct { display: none; }
+}
+/* Lower than 72 px a strip, down to a sliver, with the limits at its end:
+   the meter while it fits, then the percentages, then the 5-hour one. */
+@media (max-height: 71px) {
+  body.is-mini .mini-micro { gap: 4px; padding: 4px; }
+  .micro { border-radius: 7px; }
+  .micro-lim {
+    grid-column: 4;
+    grid-row: 1;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 0;
+    max-width: 40vw;
+    padding: 0 2px 0 4px;
+  }
+  .micro-lim .lim-name { display: none; }
+  body.is-mini .micro-lim .lim-meter { flex: none; width: 36px; min-width: 0; }
+  body.is-mini .micro-lim .lim-nums { min-width: 0; }
+}
+@media (max-height: 71px) and (max-width: 319px) {
+  .micro-lim .lim-meter { display: none; }
+}
+@media (max-height: 71px) and (max-width: 179px) {
+  .micro-lim .lim-sep,
+  .micro-lim .lim-sep + .lim-pct { display: none; }
+}
+@media (max-height: 35px) {
+  body.is-mini .mini-micro { gap: 3px; padding: 3px; }
+  .micro { border-radius: 5px; }
+  /* No room for two tools one above the other: side by side, numbers only. */
+  .micro-lim { flex-direction: row; gap: 0 8px; }
+  .micro-lim:has(.lim-tool + .lim-tool) .lim-meter { display: none; }
 }
 
 /* ---------------------------------------------------------------- narrow */

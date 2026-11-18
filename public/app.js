@@ -670,7 +670,8 @@
       tile.classList.toggle('one', !!one);
       const what = `${list.length} ${word[k](list.length)}`;
       const how = one ? (one.openUrl ? `Open “${one.title}”` : `Kopieer het resume-commando van “${one.title}”`) : '';
-      setTitle(tile, how);
+      // Also the word, for a strip that shows only the numbers.
+      setTitle(tile, how ? `${what}. ${how}` : what);
       const label = how ? `${what}. ${how}` : what;
       if (tile.getAttribute('aria-label') !== label) tile.setAttribute('aria-label', label);
     }
@@ -800,6 +801,8 @@
   // it says "Limiet" instead of the tool's name. Reset times and how old the
   // numbers are sit in the tooltip.
   const limitsEl = $('#limits');
+  // The micro view has the same meters on a line of its own.
+  const microLimEl = $('#micro-lim');
   // No numbers: what the bar says, and on hover why and what helps. An
   // expired login is renewed by itself; only an ended sign-in needs you.
   const LIMIT_PROBLEM = {
@@ -849,10 +852,13 @@
 
   function renderLimits() {
     const list = state && Array.isArray(state.limits) ? state.limits : [];
-    setHTML(limitsEl, list.map((t) => limitTool(t, list.length === 1 ? 'Limiet' : t.name)).join(''));
-    // Widths through the style object: the page's CSP blocks style attributes.
-    for (const f of $$('.lim-fill', limitsEl)) f.style.width = `${f.dataset.p}%`;
-    setHidden(limitsEl, list.length === 0);
+    const html = list.map((t) => limitTool(t, list.length === 1 ? 'Limiet' : t.name)).join('');
+    for (const el of [limitsEl, microLimEl]) {
+      setHTML(el, html);
+      // Widths through the style object: the page's CSP blocks style attributes.
+      for (const f of $$('.lim-fill', el)) f.style.width = `${f.dataset.p}%`;
+      setHidden(el, list.length === 0);
+    }
     syncLimitsHeight();
   }
 

@@ -324,7 +324,11 @@ settings open over the window under that bar, and the settings button, now
 an X, closes them from the same spot. In another app, open http://127.0.0.1:4777/?mini. Below 220×160 only three counters remain: **vragen**, **bezig** and **klaar** (finished
 and not looked at yet). A counter with exactly one session opens it with a click
 (or copies its resume command), shown by a small arrow; with more it cannot tell
-which one you mean.
+which one you mean. The limits sit on a line under the counters. Each counter
+fits its number and word to the room it has: number over word, then on one
+line, then the number only (the word is in the tooltip). Lower than 72 px the
+counters become a strip with the limits at its end, down to a sliver of about
+20 px; as it narrows the limits drop the meter, then the weekly percentage.
 
 **Steady layout.** Live updates patch rows and the open session in place
 (scroll position and selected text stay), and sessions keep their order while
@@ -373,7 +377,7 @@ tool, how much of its 5-hour and weekly limit you have used: one small meter
 with a thick bar for the 5 hours over a thin one for the week, and both
 percentages (`21% / 45%`). A bar turns orange from 75% and red from 90%; hover
 a meter for the reset times. In a narrow mini view the meters go one per row;
-the tiny micro view leaves them out. Each tool has its own switch under
+the micro view has them on a line of their own, or at the end of its strip. Each tool has its own switch under
 **Instellingen → Limieten** (both on by default).
 
 - **Claude**: the endpoint behind Claude Code's `/usage`, with the login
