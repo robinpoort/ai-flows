@@ -323,8 +323,13 @@ compact: the period (30m, 2u, 8u, 24u), notifications and settings. The
 settings open over the window under that bar, and the settings button, now
 an X, closes them from the same spot. In another app, open http://127.0.0.1:4777/?mini. Below 220×160 only three counters remain: **vragen**, **bezig** and **klaar** (finished
 and not looked at yet). A counter with exactly one session opens it with a click
-(or copies its resume command), shown by a small arrow; with more it cannot tell
-which one you mean. The limits sit on a line under the counters. Each counter
+(or copies its resume command), shown by a small arrow. One with more opens a
+small window beside it (`?pick=q|w|d`) with just those sessions, kept live
+and as tall as its rows: pick one and it opens and the window goes; Escape or a
+second click on the counter closes it too. It never closes by itself, also not
+when fewer sessions are left; one that opened above the micro window keeps its
+bottom edge in place as it grows or shrinks. With pop-ups blocked, the pop-up
+mini window shows the full dashboard instead, as before. The limits sit on a line under the counters. Each counter
 fits its number and word to the room it has: number over word, then on one
 line, then the number only (the word is in the tooltip). Lower than 72 px the
 counters become a strip with the limits at its end, down to a sliver of about

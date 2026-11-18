@@ -655,26 +655,45 @@
   }
 
   // The micro view's counters. A counter with one session opens it (or
-  // copies its resume command); with more it cannot tell which you mean.
+  // copies its resume command); one with more opens a small window with
+  // those sessions to pick from (?pick=q|w|d).
   const microPick = { q: null, w: null, d: null };
+  const microCount = { q: 0, w: 0, d: 0 };
+  const MICRO_WORD = { q: (n) => (n === 1 ? 'vraag' : 'vragen'), w: () => 'bezig', d: () => 'klaar' };
+  const PICK = ((k) => (k in MICRO_WORD ? k : null))(new URLSearchParams(location.search).get('pick'));
 
   function renderMicro(lists) {
-    const word = { q: (n) => (n === 1 ? 'vraag' : 'vragen'), w: () => 'bezig', d: () => 'klaar' };
+    const word = MICRO_WORD;
     for (const k of Object.keys(lists)) {
       const list = lists[k];
       const one = list.length === 1 && (list[0].openUrl || list[0].resumeCmd) ? list[0] : null;
       microPick[k] = one;
+      microCount[k] = list.length;
       const tile = $(`.micro[data-micro="${k}"]`);
       setText($('.what', tile), word[k](list.length));
       tile.classList.toggle('hot', list.length > 0);
       tile.classList.toggle('one', !!one);
+      tile.classList.toggle('many', list.length > 1);
       const what = `${list.length} ${word[k](list.length)}`;
-      const how = one ? (one.openUrl ? `Open “${one.title}”` : `Kopieer het resume-commando van “${one.title}”`) : '';
+      const how = one ? (one.openUrl ? `Open “${one.title}”` : `Kopieer het resume-commando van “${one.title}”`)
+        : list.length > 1 ? 'Kies welke je opent' : '';
       // Also the word, for a strip that shows only the numbers.
       setTitle(tile, how ? `${what}. ${how}` : what);
       const label = how ? `${what}. ${how}` : what;
       if (tile.getAttribute('aria-label') !== label) tile.setAttribute('aria-label', label);
     }
+  }
+
+  // The pick window: the sessions of one counter, kept live.
+  const PICK_NONE = { q: 'Geen open vragen meer.', w: 'Niets meer bezig.', d: 'Niets meer klaar.' };
+  function renderPick(list) {
+    const what = `${list.length} ${MICRO_WORD[PICK](list.length)}`;
+    setText($('#pick-label'), what);
+    renderList($('#pick-list'), list.map((s) => miniRow(s, PICK === 'q')));
+    setText($('#pick-none'), PICK_NONE[PICK]);
+    setHidden($('#pick-none'), list.length > 0);
+    const t = `${what} · AI Flows`;
+    if (document.title !== t) document.title = t;
   }
 
   function renderMini(sessions, questions) {
@@ -684,6 +703,7 @@
     // Klaar: finished and not looked at yet (the blue ones).
     const done = sessions.filter((s) => s.unread && sectionOf(s) === 'done');
     renderMicro({ q: questions, w: busy, d: done });
+    if (PICK) renderPick({ q: questions, w: busy, d: done }[PICK]);
     for (const el of $$('[data-count="done"]')) setText(el, done.length);
     const qIds = new Set(questions.map((s) => s.id));
     const flows = sessions.filter((s) => !qIds.has(s.id));
@@ -778,7 +798,7 @@
       setText(el, questions.length);
       el.classList.toggle('hot', questions.length > 0);
     }
-    { const t = questions.length ? `(${questions.length}) AI Flows` : 'AI Flows'; if (document.title !== t) document.title = t; }
+    if (!PICK) { const t = questions.length ? `(${questions.length}) AI Flows` : 'AI Flows'; if (document.title !== t) document.title = t; }
     renderMini(sessions, questions);
     renderLimits();
     syncBell();
@@ -1170,7 +1190,9 @@
     const act = el.dataset.act;
     if (act === 'open') {
       e.preventDefault();
-      openSession(find(el.dataset.sid));
+      await openSession(find(el.dataset.sid));
+      // Picked from the pick window: done with it.
+      if (PICK) setTimeout(() => window.close(), 300);
     } else if (act === 'answer') {
       const s = find(el.dataset.sid);
       const text = cleanAnswer(el.dataset.text);
@@ -1184,6 +1206,7 @@
     } else if (act === 'copy') {
       await copy(String(el.dataset.text).replace(INVISIBLE, ''));
       toast('Gekopieerd. Plak in je terminal.');
+      if (PICK && el.closest('#pick-list')) setTimeout(() => window.close(), 1200);
     } else if (act === 'fold') {
       toggleFolder(el.dataset.fold);
     } else if (act === 'subfold') {
@@ -1312,8 +1335,9 @@
   function setShowFull(on) { showFull = on; session.set(on); }
 
   function applyMode() {
-    const mini = params.has('mini') || (!showFull && narrowQuery.matches);
+    const mini = !PICK && (params.has('mini') || (!showFull && narrowQuery.matches));
     document.body.classList.toggle('is-mini', mini);
+    document.body.classList.toggle('is-pick', !!PICK);
     // Mini because the window is narrow: widening it is the way to the full
     // view, so no button for it (the pop-up and ?mini keep theirs).
     document.body.classList.toggle('auto-mini', mini && !params.has('mini'));
@@ -1339,17 +1363,78 @@
     scrollTo(0, 0);
   }
   $('#mini-expand').addEventListener('click', openFull);
+
+  // A counter with more sessions opens the pick window next to this one:
+  // under it, or above it when there is no room (it then fits itself to its
+  // rows). A second click on the same counter closes it again.
+  let pickWin = null;
+  let pickWinKey = null;
+  let pickWasOpen = false;
+  function openPick(k) {
+    if (pickWin && !pickWin.closed) pickWin.close();
+    const w = 300;
+    const h = Math.min(420, 44 + microCount[k] * (k === 'q' ? 50 : 36));
+    const sTop = screen.availTop || 0;
+    const sLeft = screen.availLeft || 0;
+    let top = window.screenY + window.outerHeight + 6;
+    if (top + h + 60 > sTop + screen.availHeight) top = Math.max(sTop, window.screenY - h - 72);
+    const left = Math.max(sLeft, Math.min(window.screenX, sLeft + screen.availWidth - w));
+    const win = window.open(`/?pick=${k}`, 'ai-flows-pick', `popup=yes,width=${w},height=${h},left=${Math.round(left)},top=${Math.round(top)}`);
+    if (!win) return false;
+    pickWin = win;
+    pickWinKey = k;
+    return true;
+  }
+  $('.mini-micro').addEventListener('pointerdown', (e) => {
+    const tile = e.target.closest('.micro');
+    pickWasOpen = !!(tile && pickWin && !pickWin.closed && pickWinKey === tile.dataset.micro);
+  });
   $('.mini-micro').addEventListener('click', async (e) => {
     const tile = e.target.closest('.micro');
-    const s = tile && microPick[tile.dataset.micro];
+    const k = tile && tile.dataset.micro;
+    const s = tile && microPick[k];
+    // Its pick window is open (also when it is down to one): close it.
+    if (tile && pickWasOpen) {
+      pickWasOpen = false;
+      if (pickWin && !pickWin.closed) pickWin.close();
+      return;
+    }
     if (s && s.openUrl) { openSession(s); return; }
     if (s && s.resumeCmd) {
       await copy(String(s.resumeCmd).replace(INVISIBLE, ''));
       toast('Gekopieerd. Plak in je terminal.');
       return;
     }
+    if (tile && microCount[k] > 1 && openPick(k)) return;
     if (params.has('mini')) openFull();
   });
+
+  // The pick window stays until you are done with it: after picking (see the
+  // click handler), with Escape, or a second click on its counter; never by
+  // itself, also not when fewer sessions are left. It keeps to the height of
+  // its rows; one that opened above the micro window keeps its bottom edge
+  // where it is, and it stays on the screen.
+  if (PICK) {
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#ctx').hidden) window.close(); }, true);
+    const pickEl = $('#pick');
+    const fitPick = () => {
+      const want = Math.ceil(pickEl.offsetTop + pickEl.offsetHeight);
+      const max = Math.max(120, Math.min(560, screen.availHeight - 120));
+      document.documentElement.classList.toggle('pick-scroll', want > max);
+      const dh = Math.min(want, max) - window.innerHeight;
+      if (Math.abs(dh) < 2) return;
+      let above = false;
+      try { above = !!(window.opener && !window.opener.closed && window.screenY < window.opener.screenY); } catch {}
+      // Taken before resizing: the window takes its new size a moment later.
+      const top0 = window.screenY;
+      const outer0 = window.outerHeight;
+      window.resizeBy(0, dh);
+      if (above) { window.moveBy(0, -dh); return; }
+      const over = top0 + outer0 + dh - ((screen.availTop || 0) + screen.availHeight);
+      if (over > 0) window.moveBy(0, -over);
+    };
+    if (window.ResizeObserver) new ResizeObserver(() => requestAnimationFrame(fitPick)).observe(pickEl);
+  }
 
   openMini.addEventListener('click', () => {
     if (narrowQuery.matches && !params.has('mini')) { setShowFull(false); applyMode(); scrollTo(0, 0); return; }

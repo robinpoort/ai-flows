@@ -675,7 +675,8 @@ body:not(.is-mini) .toast { bottom: calc(76px + var(--lim, 0px)); }
 body.locked .controls,
 body.locked .notice,
 body.locked .layout,
-body.locked .mini { display: none !important; }
+body.locked .mini,
+body.locked .pick { display: none !important; }
 .locked { display: grid; place-items: center; min-height: calc(100vh - 80px); padding: 24px 16px; }
 body.is-mini .locked { min-height: 100vh; padding: 12px; }
 .locked-card {
@@ -970,10 +971,11 @@ body.is-mini #settings-button[aria-expanded="true"] .icon-close { display: block
   /* One session behind it: it opens that one, and says so with a small arrow. */
   .micro .go { display: none; position: absolute; top: 5px; right: 5px; width: 12px; height: 12px; opacity: .75; }
   .micro .go svg { display: block; width: 100%; height: 100%; }
-  .micro.one { cursor: pointer; }
-  .micro.one .go { display: block; }
-  .micro.one:hover { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, currentColor 40%, transparent); }
-  .micro.one:active { transform: translateY(1px); }
+  /* More than one: it opens a small window to pick from, with the same arrow. */
+  .micro:is(.one, .many) { cursor: pointer; }
+  .micro:is(.one, .many) .go { display: block; }
+  .micro:is(.one, .many):hover { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, currentColor 40%, transparent); }
+  .micro:is(.one, .many):active { transform: translateY(1px); }
   .micro strong { font-size: clamp(16px, min(40cqh, 50cqw), 44px); line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
   .micro .what { font-size: 11px; line-height: 13px; margin-top: 2px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .micro.q.hot { background: var(--accent); color: color-mix(in srgb, var(--on-accent) 85%, transparent); }
@@ -991,8 +993,10 @@ body.is-mini #settings-button[aria-expanded="true"] .icon-close { display: block
   }
   /* Too narrow for the word: the number only; colour and tooltip tell them apart. */
   @container (max-height: 43px) and (max-width: 57px) { .micro .what { display: none; } }
+  /* On one line the word goes before the arrow does: the arrow first. */
+  @container (max-height: 43px) and (min-width: 58px) and (max-width: 69px) { .micro:is(.one, .many) .go { display: none; } }
   @container (max-width: 39px) { .micro .what { display: none; } }
-  @container (max-width: 25px) { .micro.one .go { display: none; } }
+  @container (max-width: 25px) { .micro:is(.one, .many) .go { display: none; } }
 
   /* The limits: the same meters as at the bottom of the mini view, on a line
      under the counters. */
@@ -1059,6 +1063,21 @@ body.is-mini #settings-button[aria-expanded="true"] .icon-close { display: block
   .micro-lim { flex-direction: row; gap: 0 8px; }
   .micro-lim:has(.lim-tool + .lim-tool) .lim-meter { display: none; }
 }
+
+/* pick: the sessions behind a micro counter, in a small window of their own;
+   picking one opens it and closes the window. */
+.pick { display: none; }
+body.is-pick { background: var(--surface); }
+body.is-pick .top,
+body.is-pick .notice,
+body.is-pick .layout,
+body.is-pick .mini,
+body.is-pick .limits { display: none !important; }
+body.is-pick .pick { display: block; padding: 2px 4px 8px; }
+/* The window fits its rows (app.js), so no scrollbar, unless it hit its
+   largest size. */
+html:has(body.is-pick) { overflow: hidden; }
+html.pick-scroll:has(body.is-pick) { overflow-y: auto; }
 
 /* ---------------------------------------------------------------- narrow */
 
