@@ -335,7 +335,7 @@ header. (`?mini` is gone; old links drop it.) Without a scrollbar the mini view 
 compact: the period (30m, 2u, 8u, 24u), notifications and settings. The
 settings open over the window under that bar, and the settings button, now
 an X, closes them from the same spot. In another app, open http://127.0.0.1:4777 in a
-small window. Below 220×160 only three counters remain: **vragen**, **bezig** and **klaar** (finished
+small window. In a window lower than 160 px, or narrower than 190 px (too narrow for the list), only three counters remain: **vragen**, **bezig** and **klaar** (finished
 and not looked at yet). A counter with exactly one session opens it with a click
 (or copies its resume command), shown by a small arrow. One with more opens a
 small window beside it (`?pick=q|w|d`) with just those sessions, by folder

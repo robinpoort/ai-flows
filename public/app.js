@@ -1367,6 +1367,7 @@
     // In a narrow window widening it is the way to the full view, so no button
     // for it; the pop-up keeps its button, which goes to the dashboard tab.
     document.body.classList.toggle('auto-mini', mini && !POPUP);
+    syncMicro();
     const home = mini ? $('#mini-bar') : controlsHome;
     if (controls.parentNode !== home) {
       if (!settingsPanel.hidden) toggleSettings(false);
@@ -1378,6 +1379,16 @@
     openMini.setAttribute('aria-label', back ? 'Terug naar de mini-weergave' : 'Mini-venster');
   }
   narrowQuery.addEventListener('change', () => { setShowFull(false); applyMode(); });
+
+  // The micro view (app.css): a low window, or one too narrow for the list.
+  // Measured on the window itself, whose size includes a scrollbar in every
+  // browser; a media query in WebKit leaves a classic scrollbar out, so the
+  // list's scrollbar would flip it to the micro view and back, over and over.
+  function syncMicro() {
+    const micro = document.body.classList.contains('is-mini') && (innerHeight < 160 || innerWidth < 190);
+    if (document.body.classList.contains('is-micro') !== micro) document.body.classList.toggle('is-micro', micro);
+  }
+  window.addEventListener('resize', syncMicro);
 
   function openFull() {
     // From the pop-up window, show the full dashboard in a normal tab.
