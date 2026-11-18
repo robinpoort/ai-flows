@@ -296,7 +296,7 @@ button under the open session, to mark it unread
 (it stays blue until you open it in Claude) or read (also for one that stays
 blue when it should not). Marks are kept in `~/.claude/ai-flows/marks.json`.
 
-**Folders and closing.** Every session names the folder it was started in
+**Folders and hiding.** Every session names the folder it was started in
 (for the Claude app its `originCwd`; a worktree counts as its repository, and a
 session started from another one sits with that one, as in the app's sidebar).
 Such a subtask sits right under the session it came from, one step in with a
@@ -308,11 +308,11 @@ remembered per browser. A subtask in another group than its session (still
 busy while that one is done, say) names it on its row.
 The mini view groups by it, A to Z; click a folder to fold it shut. A shut
 folder shows what it holds ("1 waiting · 2 working") and turns its count blue when
-something in it needs you. Folding is remembered per browser. **Close session**
+something in it needs you. Folding is remembered per browser. **Hide session**
 (under the open session, or right-click) drops one you are done with, even
 inside the time window: it stays away until you send it a new message or it
-asks you something new, and the toast offers **Undo**. Closing only
-hides it here; the session itself is untouched.
+asks you something new, and the toast offers **Undo**. Hiding only
+happens here; the session itself is untouched.
 
 **Full view.** The list on the left keeps the session you picked (per tab,
 across reloads); when that one leaves the period, the one now in its place is

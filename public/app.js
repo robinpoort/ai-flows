@@ -442,7 +442,7 @@
     return `${openButton(s, true)}
       <button type="button" class="btn" data-act="mark" data-sid="${esc(s.id)}">${needsReading(s) ? 'Mark as read' : 'Mark as unread'}</button>
       <span class="spacer"></span>
-      <button type="button" class="btn link" data-act="close" data-sid="${esc(s.id)}">Close session</button>`;
+      <button type="button" class="btn link" data-act="close" data-sid="${esc(s.id)}">Hide session</button>`;
   }
 
   // Patch the children of a container to new HTML, so a session at work
@@ -1119,8 +1119,9 @@
   // ---------------------------------------------------------------- right-click menu
 
   // Right-click a flow (card, question or mini row) to open it, mark it read or
-  // unread, or close it. "Unread" lasts until you open the session in its app;
-  // "closed" until you send it a new message or it asks something new.
+  // unread, or hide it. "Unread" lasts until you open the session in its app;
+  // hidden ("closed" in the API) until you send it a new message or it asks
+  // something new.
   const ctx = document.getElementById('ctx');
   let ctxSid = null;
 
@@ -1157,7 +1158,7 @@
       if (kind === 'closed') {
         if (state) state.sessions = (state.sessions || []).filter((x) => x.id !== s.id);
         render();
-        toast(`“${s.title}” closed.`, { label: 'Undo', run: () => markSession(s, 'open') });
+        toast(`“${s.title}” hidden.`, { label: 'Undo', run: () => markSession(s, 'open') });
         return;
       }
       if (kind === 'open') { toast('Restored.'); return; }
