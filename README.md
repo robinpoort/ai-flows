@@ -1,35 +1,41 @@
 # AI Flows
 
-A local dashboard of your AI coding sessions on macOS, Claude Code and OpenAI
-Codex side by side: what is working right now, what is waiting for you, and
-what finished recently (last 30 minutes to 24 hours). A macOS notification
-tells you when a new question comes in, and one click opens the session in its
-app.
+A small window that floats above everything else and keeps your AI coding
+sessions in view: which ones wait for you, which are working and which are
+done. For Claude Code and OpenAI Codex, on macOS.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/floating-dark.png">
+  <img alt="The AI Flows mini window floating over another app, grouped by folder, with an AI Flows notification above it: a session asks which colour the checkout button should get" src="docs/screenshots/floating-light.png">
+</picture>
+
+**Let it float.** Press **Mini window**: in Chrome and Edge it stays on top of
+every other window, other apps too, so you see at a glance when a session
+needs you. Sessions are grouped by folder, like the Claude app's sidebar, and a
+click on one opens it in its app. Any narrow window works the same way, and you
+can [install AI Flows as an app](#as-an-app) for a window without an address bar.
+
+**Get notified.** A macOS notification tells you when a session asks you
+something or needs your permission, and it goes away again once you answer.
+Click it and you are in that session.
+
+**Need focus? Go micro.** Make the window low and only three counters remain,
+questions, working and done, with your limits. A counter with one session opens
+it; one with more opens a small window with just those, to pick one.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/micro-pick-dark.png">
+  <img alt="The micro view with three counters and the limits, and the pick window a counter opens, grouped by folder" src="docs/screenshots/micro-pick-light.png" width="520">
+</picture>
+
+**Want the whole picture? Widen it.** The full view lists every session by
+status (**Waiting for you**, **Working**, **Done**) beside the one you pick: its
+question with the answer options, what it is doing right now, your last prompt
+and the whole reply, with your 5-hour and weekly limits along the bottom.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/full-dark.png">
   <img alt="The full view: sessions waiting for you, working and done, beside the one you picked with its answer options, and the limits along the bottom" src="docs/screenshots/full-light.png">
-</picture>
-
-- **A list by status**: **Waiting for you** (permission prompts, choices, plans to
-  approve and questions at the end of a turn), **Working** and **Done**, one row
-  per session with what it needs or is doing, and its own button to open it.
-- **The session you pick, in full** beside it: the question with its answer
-  options, what it is doing right now (tool, subagents), your last prompt and
-  the whole reply.
-- **Mini view** for a corner of your screen, grouped by folder like the Claude
-  app's sidebar, and **macOS notifications** that are withdrawn again once you
-  answer.
-- **Installable as an app** in Chrome: its own window without an address bar;
-  make it small and it is the mini view (see [As an app](#as-an-app)).
-
-Make the window narrow and it becomes the mini view; make it low and only the
-counters remain. A counter with more than one session opens a small window with
-just those, to pick one.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/mini-micro-dark.png">
-  <img alt="The mini view grouped by folder; the micro view with three counters and the limits; the pick window a counter opens, grouped by folder" src="docs/screenshots/mini-micro-light.png" width="560">
 </picture>
 
 <sub>The screenshots show made-up sessions.</sub>
