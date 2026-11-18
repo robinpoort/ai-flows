@@ -1017,9 +1017,39 @@ const limitsCache = {
   // renew: 'busy' while Claude Code renews the login, 'failed' when the login
   // is still expired after that (the sign-in itself has ended), 'nocli' when
   // Claude Code is not found.
-  claude: { windows: null, at: 0, error: null, next: 0, busy: false, renew: null, renewAt: 0 },
+  // backoff: how long to wait after the next "asked too often" (429).
+  claude: { windows: null, at: 0, error: null, next: 0, busy: false, renew: null, renewAt: 0, backoff: 0 },
   codex: { windows: null, at: 0, next: 0, file: null, size: -1 },
 };
+
+// The last Claude numbers, kept on disk: after a restart of the server the bar
+// shows them at once, and the server does not ask again before they are due.
+// The usage endpoint answers only so many questions; until it does again, the
+// bar keeps the last numbers (their age is in the tooltip).
+const LIMITS_FILE = path.join(EVENTS_DIR, 'limits.json');
+try {
+  const saved = JSON.parse(fs.readFileSync(LIMITS_FILE, 'utf8'));
+  const cl = saved && saved.claude;
+  const at = cl && Number(cl.at);
+  const windows = cl && Array.isArray(cl.windows) ? cl.windows.map((w) => w && limitWindow(String(w.key), w.pct, w.resetsAt)).filter(Boolean) : [];
+  if (windows.length && at > 0 && at <= Date.now()) {
+    limitsCache.claude.windows = windows;
+    limitsCache.claude.at = at;
+    limitsCache.claude.next = at + CLAUDE_USAGE_EVERY;
+  }
+} catch {}
+
+function saveLimits() {
+  const c = limitsCache.claude;
+  try {
+    fs.mkdirSync(EVENTS_DIR, { recursive: true, mode: 0o700 });
+    const tmp = `${LIMITS_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ claude: { windows: c.windows, at: c.at } }) + '\n', { mode: 0o600 });
+    fs.renameSync(tmp, LIMITS_FILE);
+  } catch (err) {
+    logOnce('limits file', err);
+  }
+}
 
 function limitWindow(key, pct, resetsAt) {
   const p = Number(pct);
@@ -1088,7 +1118,7 @@ function refreshClaudeLimits() {
   const finish = (windows, error, wait) => {
     c.busy = false;
     c.next = Date.now() + wait;
-    if (windows) { c.windows = windows; c.at = Date.now(); c.renew = null; }
+    if (windows) { c.windows = windows; c.at = Date.now(); c.renew = null; c.backoff = 0; saveLimits(); }
     c.error = error;
     setImmediate(pushStreams);
   };
@@ -1108,10 +1138,19 @@ function refreshClaudeLimits() {
     if (c.renew === 'checking') c.renew = 'failed';
     finish(null, 'expired', MINUTE);
   };
+  // Asked too often (429): keep the numbers we have and wait longer each
+  // time, 6 minutes, then 12, up to an hour (or as long as it says). Without
+  // numbers yet the bar says so instead of leaving out the tool.
+  const tooOften = (afterSeconds) => {
+    c.backoff = Math.min(HOUR, c.backoff ? c.backoff * 2 : 2 * CLAUDE_USAGE_EVERY);
+    const after = Number.isFinite(afterSeconds) ? Math.min(afterSeconds * 1000, HOUR) : 0;
+    finish(null, c.windows ? null : 'busy', Math.max(c.backoff, after));
+  };
   if (CLAUDE_USAGE_FILE) {
     let body = null;
     try { body = JSON.parse(fs.readFileSync(CLAUDE_USAGE_FILE, 'utf8')); } catch {}
     if (body && body.error === 'expired') return expired();
+    if (body && body.error === 'ratelimited') return tooOften(0);
     return finish(claudeWindows(body), body ? null : 'offline', 2000);
   }
   claudeToken(async (token, problem) => {
@@ -1124,10 +1163,7 @@ function refreshClaudeLimits() {
         signal: AbortSignal.timeout(15000),
       });
       if (r.status === 401 || r.status === 403) return expired();
-      if (r.status === 429) {
-        const after = Number(r.headers.get('retry-after'));
-        return finish(null, null, Math.max(CLAUDE_USAGE_EVERY, Math.min(Number.isFinite(after) ? after * 1000 : 0, HOUR)));
-      }
+      if (r.status === 429) return tooOften(Number(r.headers.get('retry-after')));
       if (!r.ok) return finish(null, 'offline', CLAUDE_USAGE_EVERY);
       const windows = claudeWindows(await r.json());
       finish(windows, windows ? null : 'unknown', CLAUDE_USAGE_EVERY);
@@ -1452,6 +1488,7 @@ function computeState(windowMin, watching = false) {
     notify: settings.notify,
     openVia: settings.openVia,
     toolLabels: settings.toolLabels,
+    miniOnTop: settings.miniOnTop,
     limits: limitsState(watching),
     limitsOn: settings.limits,
     notifier: notifierAvailable(),
@@ -1461,7 +1498,7 @@ function computeState(windowMin, watching = false) {
 
 // ---------------------------------------------------------------- http
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json; charset=utf-8' };
 
 // Errors are logged at most once per 10 minutes per kind, so a bad transcript
 // cannot grow the log without end.
@@ -1555,12 +1592,15 @@ const NOTIFY_DIR = path.join(EVENTS_DIR, 'notify');
 //   'browser' — your browser or app opens the link: Claude comes forward with
 //               the keyboard focus; the browser may ask for permission.
 const OPEN_VIA = ['server', 'browser'];
-// toolLabels: each mini row names its AI tool (Claude, Codex). Off by default.
+// toolLabels: each session names its AI tool (Claude, Codex), in the list,
+// the open session and the mini view. Off by default.
 // limits: per AI tool, a bar with its 5-hour and weekly limit. On by default;
 // Claude's reads your login from the keychain (see "usage limits").
 // toolLabels stays off by default.
+// miniOnTop: Mini-venster opens a window that stays above all others where
+// the browser can (Chrome, Edge); off, an ordinary pop-up. On by default.
 const LIMIT_TOOLS = ['claude', 'codex'];
-const DEFAULT_SETTINGS = { notify: true, openVia: 'server', toolLabels: false, limits: { claude: true, codex: true } };
+const DEFAULT_SETTINGS = { notify: true, openVia: 'server', toolLabels: false, miniOnTop: true, limits: { claude: true, codex: true } };
 
 // Also takes the single on/off of earlier versions.
 function limitsSetting(v) {
@@ -1577,6 +1617,7 @@ function loadSettings() {
     const s = { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
     if (!OPEN_VIA.includes(s.openVia)) s.openVia = DEFAULT_SETTINGS.openVia;
     if (typeof s.toolLabels !== 'boolean') s.toolLabels = DEFAULT_SETTINGS.toolLabels;
+    if (typeof s.miniOnTop !== 'boolean') s.miniOnTop = DEFAULT_SETTINGS.miniOnTop;
     s.limits = limitsSetting(s.limits);
     return s;
   } catch {
@@ -1706,6 +1747,11 @@ async function handleSettings(req, res) {
       saveSettings();
       pushStreams();
     }
+    if (body && typeof body.miniOnTop === 'boolean') {
+      settings.miniOnTop = body.miniOnTop;
+      saveSettings();
+      pushStreams();
+    }
     if (body && body.limits && typeof body.limits === 'object') {
       const next = { ...settings.limits };
       for (const t of LIMIT_TOOLS) if (typeof body.limits[t] === 'boolean') next[t] = body.limits[t];
@@ -1725,7 +1771,7 @@ async function handleSettings(req, res) {
       }
     }
   }
-  sendJson(res, { notify: settings.notify, openVia: settings.openVia, toolLabels: settings.toolLabels, limits: settings.limits, notifier: notifierAvailable() });
+  sendJson(res, { notify: settings.notify, openVia: settings.openVia, toolLabels: settings.toolLabels, miniOnTop: settings.miniOnTop, limits: settings.limits, notifier: notifierAvailable() });
 }
 
 // One-time code: open.sh writes "<code> <unix time>" to an owner-only file and
@@ -1801,9 +1847,11 @@ function openSession(req, res, sid) {
 
 // Every response: only our own files may load, the page may not be framed by
 // another site (clickjacking), and other origins may not embed our responses.
+// Only the dashboard itself may frame it: its Mini-venster that stays on top
+// (a Picture-in-Picture window) holds the dashboard in a frame.
 const SECURITY_HEADERS = {
-  'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-  'X-Frame-Options': 'DENY',
+  'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
+  'X-Frame-Options': 'SAMEORIGIN',
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'no-referrer',
   'Cross-Origin-Resource-Policy': 'same-origin',

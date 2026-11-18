@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AI Flows</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <!-- Installable as an app (Chrome: install icon in the address bar): its own
+       window without an address bar; small, it is the mini view. -->
+  <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -63,10 +66,14 @@
       <input type="checkbox" name="limit-codex">
       <span><strong>Codex</strong><small>Uit je Codex-sessies.</small></span>
     </label>
-    <h3 class="settings-section">Mini-venster</h3>
+    <h3 class="settings-section">Weergave</h3>
     <label class="choice">
       <input type="checkbox" name="tool-labels">
       <span><strong>Toon de AI-tool</strong><small>Claude of Codex per sessie.</small></span>
+    </label>
+    <label class="choice">
+      <input type="checkbox" name="mini-on-top">
+      <span><strong>Mini-venster altijd bovenaan</strong><small>In Chrome en Edge. Uit: een gewoon venster.</small></span>
     </label>
   </section>
 

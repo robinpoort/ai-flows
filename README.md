@@ -15,6 +15,8 @@ app.
 - **Mini view** for a corner of your screen, grouped by folder like the Claude
   app's sidebar, and **macOS notifications** that are withdrawn again once you
   answer.
+- **Installable as an app** in Chrome: its own window without an address bar;
+  make it small and it is the mini view (see [As an app](#as-an-app)).
 
 Everything stays on your Mac: the server only listens on 127.0.0.1 and sends
 nothing anywhere.
@@ -107,7 +109,7 @@ path.
 | `~/.codex/state_*.sqlite`, `~/.codex/sessions/` | Reads (read-only): Codex's thread list and the tail of recent rollout files (also for its limits) |
 | macOS keychain, item `Claude Code-credentials` | Reads, while **Limieten → Claude** is on (the default): Claude Code's login, to fetch your 5-hour and weekly limits (see [Limits](#limits)) |
 | `claude` (Claude Code's command) | Runs, while **Limieten → Claude** is on and that login has expired: `claude -p /usage`, at most every 15 minutes, so Claude Code renews it (see Security) |
-| `~/.claude/ai-flows/` | Writes: `app/` (server, page, helper), `hook.sh`, daily event logs (7 days kept), `settings.json`, `token`, `marks.json`, one-time `claim` codes, `notify/` payloads |
+| `~/.claude/ai-flows/` | Writes: `app/` (server, page, helper), `hook.sh`, daily event logs (7 days kept), `settings.json`, `token`, `marks.json`, `limits.json` (the last Claude limits), one-time `claim` codes, `notify/` payloads |
 | `~/.claude/projects/*/*.jsonl` | Reads: the tail of recent transcripts |
 | `~/Library/Application Support/Claude/claude-code-sessions/` | Reads: the desktop app's session titles and ids |
 | `~/Library/LaunchAgents/local.ai-flows.plist` | Writes: the LaunchAgent |
@@ -150,8 +152,10 @@ checkout.
 - Actions (`/api/open`, `/api/settings`, `/api/mark`, `/api/claim`) also need a POST with an `X-AI-Flows`
   header, which a cross-site page can only send after a preflight that this
   server refuses.
+- No other site may frame the dashboard; only the dashboard itself may, for
+  the Mini-venster that stays on top.
 - Every response carries a Content Security Policy (own files only,
-  `frame-ancestors 'none'`), `X-Frame-Options: DENY`, `nosniff`,
+  `frame-ancestors 'self'`), `X-Frame-Options: SAMEORIGIN`, `nosniff`,
   `Referrer-Policy: no-referrer` and `Cross-Origin-Resource-Policy: same-origin`.
 
 **Content from sessions** (prompts, questions, answers, folder names, commands)
@@ -312,20 +316,31 @@ separately, and macOS rounds the corners.
 
 **Mini view.** One row per session under its folder: status dot, title and
 time; questions also show the question, and without open questions that part
-is left out. It switches on in a window narrower than 760 px (where the list
-and a session no longer fit side by side), with `?mini`
-at any size, or via **Mini-venster**, which opens a 320×460 pop-up. Mini
-because the window is narrow: widen it for the full view (no button for it).
-The pop-up and `?mini` have **Volledig dashboard openen**; `?full` shows the
-full view for one load, until the window crosses 760 px or you press the mini
-button in the header. Without a scrollbar the mini view keeps no room free for one. Its mini bar holds the same controls as the header,
+is left out. It switches on in any window narrower than 760 px (where the
+list and a session no longer fit side by side). **Mini-venster** opens just
+such a window, 320×460. In Chrome and Edge it stays above all other windows,
+also those of other apps, and has no address bar (a Picture-in-Picture
+window with the dashboard in it); its arrow button brings the dashboard tab
+back, and it goes when that tab closes. Chrome tells pages in such a window
+that they are dark; this one follows the dashboard tab's light or dark (its
+title bar stays dark: Chrome draws it). Chrome keeps it at least 240 px wide;
+lower it can go down to about 50 px. **Instellingen → Weergave → Mini-venster
+altijd bovenaan** (on by default) switches it off for an ordinary window,
+which can be narrower. Elsewhere it is an ordinary pop-up of
+the dashboard, which is the full view again once you widen it, with
+**Volledig dashboard openen** to bring the dashboard tab forward. In a narrow
+window widening it is the way to the full view (no button for it). `?full` shows the full view for one
+load, until the window crosses 760 px or you press the mini button in the
+header. (`?mini` is gone; old links drop it.) Without a scrollbar the mini view keeps no room free for one. Its mini bar holds the same controls as the header,
 compact: the period (30m, 2u, 8u, 24u), notifications and settings. The
 settings open over the window under that bar, and the settings button, now
-an X, closes them from the same spot. In another app, open http://127.0.0.1:4777/?mini. Below 220×160 only three counters remain: **vragen**, **bezig** and **klaar** (finished
+an X, closes them from the same spot. In another app, open http://127.0.0.1:4777 in a
+small window. Below 220×160 only three counters remain: **vragen**, **bezig** and **klaar** (finished
 and not looked at yet). A counter with exactly one session opens it with a click
 (or copies its resume command), shown by a small arrow. One with more opens a
-small window beside it (`?pick=q|w|d`) with just those sessions, kept live
-and as tall as its rows: pick one and it opens and the window goes; Escape or a
+small window beside it (`?pick=q|w|d`) with just those sessions, by folder
+as in the mini view (and folded the same way), kept live and as tall as its
+rows: pick one and it opens and the window goes; Escape or a
 second click on the counter closes it too. It never closes by itself, also not
 when fewer sessions are left; one that opened above the micro window keeps its
 bottom edge in place as it grows or shrinks. With pop-ups blocked, the pop-up
@@ -365,9 +380,9 @@ few seconds:
 
 Codex sessions show **Codex-app** or **Codex CLI** with their name and
 **Open in Codex**, which opens `codex://threads/<id>` in the app; CLI threads
-offer a `codex resume` command to copy instead. **Instellingen → Mini-venster →
-Toon de AI-tool** (off by default) adds a Claude or Codex label to each row of
-the mini view. Read and unread work
+offer a `codex resume` command to copy instead. **Instellingen → Weergave →
+Toon de AI-tool** (off by default) adds a Claude or Codex label to each
+session: in the list, the open session, the mini view and the pick window. Read and unread work
 through the right-click menu, as for terminal sessions: Codex records no
 "seen" moment the dashboard can read.
 
@@ -375,19 +390,37 @@ Another tool fits in the same way: a scan that finds its conversations, a
 reader that turns one into a status, and a session in the shape the server
 already sends, with its own `tool` and `toolName`.
 
+## As an app
+
+Chrome shows its address bar in every ordinary pop-up; a page cannot hide it.
+The **Mini-venster** that stays on top has none (see Mini view). Installed as an app, the dashboard gets a
+window of its own without one: in Chrome, click the install icon at the right
+of the address bar (or **⋮ → Opslaan en delen → Pagina installeren als app**).
+Make that window small and it is the mini view; wide, the full view. The
+manifest (`public/manifest.webmanifest`) names it AI Flows, with the same icon
+as the notifier.
+
 ## Limits
 
 A bar fixed to the bottom of the dashboard and the mini view shows, per AI
-tool, how much of its 5-hour and weekly limit you have used: one small meter
-with a thick bar for the 5 hours over a thin one for the week, and both
-percentages (`21% / 45%`). A bar turns orange from 75% and red from 90%; hover
-a meter for the reset times. In a narrow mini view the meters go one per row;
+tool, how much of its 5-hour and weekly limit you have used. In the full view
+each limit has a card of its own: its name (**5 uur**, **Week**), when it
+resets, a bar and the percentage; with two tools that do not fit on one line,
+one line per tool. The mini view has one small meter per tool, with a thick
+bar for the 5 hours over a thin one for the week, and both percentages
+(`21% / 45%`); hover it for the reset times. A bar turns orange from 75% and
+red from 90%. In a narrow mini view the meters go one per row;
 the micro view has them on a line of their own, or at the end of its strip. Each tool has its own switch under
 **Instellingen → Limieten** (both on by default).
 
 - **Claude**: the endpoint behind Claude Code's `/usage`, with the login
   Claude Code keeps in the keychain, every 3 minutes while a dashboard is
-  open. See Security for how the login is handled.
+  open. See Security for how the login is handled. It answers only so many
+  questions: when it says "too many" (429) the server waits longer each time
+  (6 minutes, then 12, up to an hour) and keeps showing the last numbers (their
+  age is in the tooltip). Those are kept in `~/.claude/ai-flows/limits.json`,
+  so a restart shows them at once and does not ask again before they are due.
+  With no numbers yet the bar says "even geduld".
 - **Codex**: every Codex turn writes its limits into the thread's rollout
   file, so the bar shows them as of your last Codex turn. A window whose reset
   time has passed shows 0%.

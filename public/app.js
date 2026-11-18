@@ -323,7 +323,7 @@
           <span class="stitle-line"><span class="stitle">${esc(s.title)}</span>${subToggle(r)}</span>
           ${timeEl(when, 'compact')}
           <span class="sline">${esc(rowLine(s))}</span>
-          <span class="smeta">${esc(folderName(s))} · ${esc(s.app)}${from ? ` · sub-taak van ${esc(from.title)}` : ''}</span>
+          <span class="smeta">${miniTools ? `<span class="stool">${esc(app)}</span>` : ''}${esc(folderName(s))} · ${esc(s.app)}${from ? ` · sub-taak van ${esc(from.title)}` : ''}</span>
         </button>
         ${open}
       </div>`,
@@ -398,6 +398,7 @@
       <div class="d-meta">
         <span class="pill ${st.cls}${s.unread ? ' unread' : ''}"><span class="dot"></span>${esc(s.unread ? 'Nieuw' : st.label)}</span>
         <span class="chip-app">${esc(s.app)}</span>
+        ${miniTools ? `<span class="chip-app">${esc(app)}</span>` : ''}
         <span class="spacer"></span>
         ${statusTime(s)}
       </div>
@@ -627,7 +628,8 @@
     interrupted: 'attention', error: 'error', done: 'done', idle: 'done', ended: 'done',
   };
 
-  // Each mini row names its AI tool (Claude, Codex) when that setting is on.
+  // Each session names its AI tool (Claude, Codex) when that setting is on:
+  // in the list, the open session, the mini view and the pick window.
   let miniTools = false;
 
   function miniRow(s, withQuestion, r = {}) {
@@ -659,6 +661,7 @@
   // those sessions to pick from (?pick=q|w|d).
   const microPick = { q: null, w: null, d: null };
   const microCount = { q: 0, w: 0, d: 0 };
+  const microFolders = { q: 0, w: 0, d: 0 };
   const MICRO_WORD = { q: (n) => (n === 1 ? 'vraag' : 'vragen'), w: () => 'bezig', d: () => 'klaar' };
   const PICK = ((k) => (k in MICRO_WORD ? k : null))(new URLSearchParams(location.search).get('pick'));
 
@@ -669,6 +672,7 @@
       const one = list.length === 1 && (list[0].openUrl || list[0].resumeCmd) ? list[0] : null;
       microPick[k] = one;
       microCount[k] = list.length;
+      microFolders[k] = list.length > 1 ? byFolder(list).length : 0;
       const tile = $(`.micro[data-micro="${k}"]`);
       setText($('.what', tile), word[k](list.length));
       tile.classList.toggle('hot', list.length > 0);
@@ -689,7 +693,9 @@
   function renderPick(list) {
     const what = `${list.length} ${MICRO_WORD[PICK](list.length)}`;
     setText($('#pick-label'), what);
-    renderList($('#pick-list'), list.map((s) => miniRow(s, PICK === 'q')));
+    // By folder, as in the mini view, and folded the same way (questions as
+    // under Vragen there, the rest as under Flows).
+    renderList($('#pick-list'), grouped(PICK === 'q' ? 'q' : 'f', list, (s, r) => miniRow(s, PICK === 'q', r), 'mfolder'));
     setText($('#pick-none'), PICK_NONE[PICK]);
     setHidden($('#pick-none'), list.length > 0);
     const t = `${what} · AI Flows`;
@@ -788,6 +794,7 @@
   function render() {
     if (!state) return;
     const sessions = state.sessions || [];
+    miniTools = !!state.toolLabels;
 
     const questions = sessions
       .filter((s) => s.question && (s.status === 'question' || s.status === 'permission'))
@@ -830,6 +837,7 @@
     signin: ['opnieuw inloggen', 'Je inlog bij Claude Code is afgelopen. Log opnieuw in met claude auth login in de terminal.'],
     expired: ['login verlopen', 'De login van Claude Code is verlopen. Start claude in de terminal om hem te vernieuwen.'],
     offline: ['niet bereikbaar', 'De limieten zijn nu niet op te halen. Het wordt zo opnieuw geprobeerd.'],
+    busy: ['even geduld', 'Claude geeft de limieten even niet, omdat er vaak om gevraagd is. Het wordt vanzelf later opnieuw geprobeerd.'],
     unknown: ['niet beschikbaar', 'Het antwoord met de limieten werd niet herkend.'],
   };
   const limitProblem = (t) => (t.error === 'expired'
@@ -866,8 +874,13 @@
     if (t.at && Date.now() - t.at > 30 * 60000) lines.push(`Gemeten ${ago(t.at)}`);
     const tracks = wins.map((w) => `<span class="lim-track ${limitLevel(w.pct)}"><span class="lim-fill" data-p="${w.pct}"></span></span>`).join('');
     const nums = wins.map((w) => `<span class="lim-pct ${limitLevel(w.pct)}">${w.pct}%</span>`).join('<span class="lim-sep">/</span>');
+    // The full view has room to spell it out: per limit its name, when it
+    // resets, a bigger bar and the percentage (see app.css).
+    const cards = wins.map((w) => `<span class="lim-win"><span class="lim-wtop"><span class="lim-wname">${esc(limitLabel(w.key))}</span>` +
+      `${w.resetsAt ? `<span class="lim-reset">${esc(resetText(w.resetsAt))}</span>` : ''}<span class="lim-wpct ${limitLevel(w.pct)}">${w.pct}%</span></span>` +
+      `<span class="lim-track ${limitLevel(w.pct)}"><span class="lim-fill" data-p="${w.pct}"></span></span></span>`).join('');
     return `<div class="lim-tool" role="img" aria-label="${esc(`${t.name}. ${lines.join('. ')}`)}" title="${esc([t.name, ...lines].join('\n'))}">` +
-      `<span class="lim-name">${esc(label)}</span><span class="lim-meter">${tracks}</span><span class="lim-nums">${nums}</span></div>`;
+      `<span class="lim-name">${esc(label)}</span><span class="lim-meter">${tracks}</span><span class="lim-nums">${nums}</span><span class="lim-wins">${cards}</span></div>`;
   }
 
   function renderLimits() {
@@ -1001,6 +1014,7 @@
     const via = (state && state.openVia) || 'server';
     for (const r of settingsPanel.querySelectorAll('input[name="open-via"]')) r.checked = r.value === via;
     settingsPanel.querySelector('input[name="tool-labels"]').checked = !!(state && state.toolLabels);
+    settingsPanel.querySelector('input[name="mini-on-top"]').checked = !state || state.miniOnTop !== false;
     const limitsOn = (state && state.limitsOn) || {};
     settingsPanel.querySelector('input[name="limit-claude"]').checked = !!limitsOn.claude;
     settingsPanel.querySelector('input[name="limit-codex"]').checked = !!limitsOn.codex;
@@ -1058,6 +1072,7 @@
   settingsPanel.addEventListener('change', async (e) => {
     const change = e.target.name === 'open-via' ? { openVia: e.target.value }
       : e.target.name === 'tool-labels' ? { toolLabels: e.target.checked }
+      : e.target.name === 'mini-on-top' ? { miniOnTop: e.target.checked }
       : e.target.name === 'limit-claude' ? { limits: { claude: e.target.checked } }
       : e.target.name === 'limit-codex' ? { limits: { codex: e.target.checked } } : null;
     if (!change) return;
@@ -1072,6 +1087,7 @@
       if (state) {
         state.openVia = d.openVia;
         state.toolLabels = d.toolLabels;
+        state.miniOnTop = d.miniOnTop;
         state.limitsOn = d.limits;
         // A tool turned off leaves at once; one turned on follows with the
         // next update from the server.
@@ -1081,6 +1097,10 @@
       if ('toolLabels' in change) {
         render();
         toast(d.toolLabels ? 'AI-tool zichtbaar.' : 'AI-tool verborgen.');
+        return;
+      }
+      if ('miniOnTop' in change) {
+        toast(d.miniOnTop ? 'Mini-venster blijft bovenaan.' : 'Mini-venster wordt een gewoon venster.');
         return;
       }
       if ('limits' in change) {
@@ -1308,9 +1328,10 @@
     }
   });
 
-  // mini mode: ?mini, or automatically in a window narrower than 760 px, where
-  // the list and a session no longer fit side by side. The header's controls
-  // move into the mini bar, so they work the same in both.
+  // mini mode: in a window narrower than 760 px, where the list and a session
+  // no longer fit side by side; the Mini-venster pop-up is just such a window.
+  // The header's controls move into the mini bar, so they work the same in
+  // both. (There used to be a ?mini; it is dropped from old links.)
   //
   // "Volledig dashboard openen" in a narrow window shows the full view for now:
   // kept across reloads of this tab, dropped again as soon as the window
@@ -1326,21 +1347,26 @@
     get() { try { return sessionStorage.getItem('ai-flows:full') === '1'; } catch { return false; } },
     set(on) { try { if (on) sessionStorage.setItem('ai-flows:full', '1'); else sessionStorage.removeItem('ai-flows:full'); } catch {} },
   };
+  // The Mini-venster pop-up (by its window name, which stays across reloads).
+  // In the window that stays on top the dashboard sits in a frame; Chrome's
+  // own "back to the tab" button there does what Volledig dashboard openen does.
+  const POPUP = window.name === 'ai-flows-mini';
   let showFull = params.has('full') || session.get();
-  if (params.has('full')) {
+  if (params.has('full') || params.has('mini')) {
     params.delete('full');
+    params.delete('mini');
     const q = params.toString();
     history.replaceState(null, '', location.pathname + (q ? '?' + q : '') + location.hash);
   }
   function setShowFull(on) { showFull = on; session.set(on); }
 
   function applyMode() {
-    const mini = !PICK && (params.has('mini') || (!showFull && narrowQuery.matches));
+    const mini = !PICK && !showFull && narrowQuery.matches;
     document.body.classList.toggle('is-mini', mini);
     document.body.classList.toggle('is-pick', !!PICK);
-    // Mini because the window is narrow: widening it is the way to the full
-    // view, so no button for it (the pop-up and ?mini keep theirs).
-    document.body.classList.toggle('auto-mini', mini && !params.has('mini'));
+    // In a narrow window widening it is the way to the full view, so no button
+    // for it; the pop-up keeps its button, which goes to the dashboard tab.
+    document.body.classList.toggle('auto-mini', mini && !POPUP);
     const home = mini ? $('#mini-bar') : controlsHome;
     if (controls.parentNode !== home) {
       if (!settingsPanel.hidden) toggleSettings(false);
@@ -1356,9 +1382,8 @@
   function openFull() {
     // From the pop-up window, show the full dashboard in a normal tab.
     if (window.opener && !window.opener.closed) { window.opener.focus(); return; }
-    if (params.has('mini') && window.name === 'ai-flows-mini') { window.open('/', 'ai-flows-full'); return; }
+    if (POPUP) { window.open('/', 'ai-flows-full'); return; }
     setShowFull(true);
-    if (params.has('mini')) { location.href = '/'; return; }
     applyMode();
     scrollTo(0, 0);
   }
@@ -1373,7 +1398,7 @@
   function openPick(k) {
     if (pickWin && !pickWin.closed) pickWin.close();
     const w = 300;
-    const h = Math.min(420, 44 + microCount[k] * (k === 'q' ? 50 : 36));
+    const h = Math.min(420, 44 + microCount[k] * (k === 'q' ? 50 : 36) + microFolders[k] * 36);
     const sTop = screen.availTop || 0;
     const sLeft = screen.availLeft || 0;
     let top = window.screenY + window.outerHeight + 6;
@@ -1406,7 +1431,7 @@
       return;
     }
     if (tile && microCount[k] > 1 && openPick(k)) return;
-    if (params.has('mini')) openFull();
+    if (POPUP) openFull();
   });
 
   // The pick window stays until you are done with it: after picking (see the
@@ -1436,10 +1461,48 @@
     if (window.ResizeObserver) new ResizeObserver(() => requestAnimationFrame(fitPick)).observe(pickEl);
   }
 
-  openMini.addEventListener('click', () => {
-    if (narrowQuery.matches && !params.has('mini')) { setShowFull(false); applyMode(); scrollTo(0, 0); return; }
-    const w = window.open('/?mini', 'ai-flows-mini', 'popup=yes,width=320,height=460');
-    if (!w) toast('Venster geblokkeerd. Open 127.0.0.1:4777/?mini.');
+  // Mini-venster. In Chrome and Edge a window that stays above all others,
+  // also above other apps, without an address bar (Document Picture-in-
+  // Picture), with the dashboard in it: small, so the mini view. It goes when
+  // this tab closes. Elsewhere, or when that fails, an ordinary pop-up.
+  function openTopMini() {
+    const api = window.documentPictureInPicture;
+    if (!api || (state && state.miniOnTop === false)) return null;
+    if (api.window) { api.window.focus(); return Promise.resolve(true); }
+    return api.requestWindow({ width: 320, height: 460 }).then((pip) => {
+      const d = pip.document;
+      d.title = 'AI Flows';
+      // Styles through the style object: the page's CSP blocks style elements.
+      for (const el of [d.documentElement, d.body]) Object.assign(el.style, { height: '100%', margin: '0', overflow: 'hidden' });
+      const frame = d.createElement('iframe');
+      frame.title = 'AI Flows';
+      frame.src = new URL('/', location.href).href;
+      Object.assign(frame.style, { display: 'block', width: '100%', height: '100%', border: '0' });
+      // Chrome tells pages in such a window they are dark, whatever your Mac
+      // says. A frame follows its element's color-scheme instead, so this tab's
+      // light or dark goes along, also when it changes.
+      const dark = matchMedia('(prefers-color-scheme: dark)');
+      const follow = () => {
+        frame.style.colorScheme = dark.matches ? 'dark' : 'light';
+        const bg = getComputedStyle(document.documentElement).getPropertyValue('--surface').trim();
+        for (const el of [d.documentElement, d.body]) el.style.background = bg;
+      };
+      follow();
+      dark.addEventListener('change', follow);
+      pip.addEventListener('pagehide', () => dark.removeEventListener('change', follow), { once: true });
+      d.body.append(frame);
+      return true;
+    }, () => false);
+  }
+
+  openMini.addEventListener('click', async () => {
+    if (narrowQuery.matches) { setShowFull(false); applyMode(); scrollTo(0, 0); return; }
+    // Asked for at once: the browser only allows it straight after a click.
+    const top = openTopMini();
+    if (top && await top) return;
+    // An ordinary dashboard window, only small: that makes it the mini view.
+    const w = window.open('/', 'ai-flows-mini', 'popup=yes,width=320,height=460');
+    if (!w) toast('Venster geblokkeerd. Sta pop-ups toe voor 127.0.0.1:4777.');
   });
 
   // ---------------------------------------------------------------- data

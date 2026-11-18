@@ -305,6 +305,8 @@ body.no-sessions .side { display: grid; place-items: center; border-right: 0; ba
 .smeta { grid-column: 2 / -1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sline { font-size: 13px; line-height: 18px; color: var(--muted); }
 .smeta { margin-top: 1px; font-size: 12px; line-height: 16px; color: var(--faint); }
+/* The AI tool, as in the mini rows (Instellingen → Weergave). */
+.smeta .stool { display: inline-block; margin-right: 6px; padding: 0 5px; border: 1px solid var(--line); border-radius: 5px; font-size: 11px; line-height: 14px; color: var(--muted); }
 
 /* Its own button on every row: open the session straight away. Quiet until
    you point at the row (or picked it), but always there. */
@@ -579,6 +581,25 @@ body { padding-bottom: var(--lim, 0px); }
 .lim-pct.high { font-weight: 650; color: var(--red); }
 .lim-off { color: var(--faint); }
 .lim-off.signin { color: var(--amber); }
+
+/* Full view: room to spell it out. Per limit a card with its name, when it
+   resets and its percentage over a bigger bar; the compact meter is for the
+   mini and micro views. */
+.lim-wins { display: none; }
+body:not(.is-mini) .limits { gap: 8px 44px; padding: 10px 24px 12px; font-size: 13px; line-height: 18px; }
+body:not(.is-mini) .lim-tool { gap: 18px; }
+body:not(.is-mini) .lim-name { font-size: 13.5px; }
+body:not(.is-mini) .lim-tool:not(.off) .lim-meter,
+body:not(.is-mini) .lim-tool:not(.off) .lim-nums { display: none; }
+body:not(.is-mini) .lim-wins { display: flex; gap: 22px; }
+.lim-win { display: grid; gap: 5px; width: 200px; }
+.lim-wtop { display: flex; align-items: baseline; gap: 7px; min-width: 0; white-space: nowrap; }
+.lim-wname { font-weight: 600; color: var(--text); }
+.lim-reset { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--faint); }
+.lim-wpct { margin-left: auto; font-size: 14px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.lim-wpct.warn { color: var(--amber); }
+.lim-wpct.high { color: var(--red); }
+.lim-win .lim-track { height: 6px; border-radius: 3px; }
 
 /* Mini view: side by side when both fit with a readable meter, otherwise one
    row each, names and numbers lined up. */
