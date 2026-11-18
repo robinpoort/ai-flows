@@ -933,7 +933,7 @@
   let toastTimer = null;
   const ICON_CLOSE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
   function hideToast() { clearTimeout(toastTimer); $('#toast').classList.remove('show'); }
-  // action: { label, run } adds a button, such as "Ongedaan maken".
+  // action: { label, run } adds a button, such as "Undo".
   function toast(text, action) {
     const t = $('#toast');
     const msg = document.createElement('span');
@@ -1241,7 +1241,7 @@
       }
     } else if (act === 'select') {
       select(el.dataset.sid, true);
-      // From the open session's "Sub-taak van" line: bring that row in view.
+      // From the open session's "Subtask of" line: bring that row in view.
       if (el.closest('#detail')) {
         const row = document.querySelector(`#side-list [data-key="s:${CSS.escape(el.dataset.sid)}"]`);
         if (row) row.scrollIntoView({ block: 'nearest' });

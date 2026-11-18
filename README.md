@@ -6,6 +6,11 @@ what finished recently (last 30 minutes to 24 hours). A macOS notification
 tells you when a new question comes in, and one click opens the session in its
 app.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/full-dark.png">
+  <img alt="The full view: sessions waiting for you, working and done, beside the one you picked with its answer options, and the limits along the bottom" src="docs/screenshots/full-light.png">
+</picture>
+
 - **A list by status**: **Waiting for you** (permission prompts, choices, plans to
   approve and questions at the end of a turn), **Working** and **Done**, one row
   per session with what it needs or is doing, and its own button to open it.
@@ -17,6 +22,17 @@ app.
   answer.
 - **Installable as an app** in Chrome: its own window without an address bar;
   make it small and it is the mini view (see [As an app](#as-an-app)).
+
+Make the window narrow and it becomes the mini view; make it low and only the
+counters remain. A counter with more than one session opens a small window with
+just those, to pick one.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/mini-micro-dark.png">
+  <img alt="The mini view grouped by folder; the micro view with three counters and the limits; the pick window a counter opens, grouped by folder" src="docs/screenshots/mini-micro-light.png" width="560">
+</picture>
+
+<sub>The screenshots show made-up sessions.</sub>
 
 Everything stays on your Mac: the server only listens on 127.0.0.1 and sends
 nothing anywhere.

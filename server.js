@@ -87,12 +87,12 @@ function isAutomated(text) {
 }
 
 function automatedLabel(text) {
-  if (/^<task-notification/.test(text)) return 'Achtergrondtaak gemeld';
+  if (/^<task-notification/.test(text)) return 'Background task reported';
   if (/^<side-sessions-event/.test(text)) return 'Message from another session';
-  if (/^<ci-monitor-event/.test(text)) return 'CI-melding';
-  if (/^<bash-/.test(text)) return 'Shell-commando';
-  if (/^<(command-|local-command)/.test(text)) return 'Slash-commando';
-  return 'Automatisch bericht';
+  if (/^<ci-monitor-event/.test(text)) return 'CI notice';
+  if (/^<bash-/.test(text)) return 'Shell command';
+  if (/^<(command-|local-command)/.test(text)) return 'Slash command';
+  return 'Automated message';
 }
 
 // The question a finished turn leaves you with, if any.
@@ -332,7 +332,7 @@ function deriveFromEvents(events) {
         break;
       }
       case 'StopFailure':
-        st.error = { text: e.error || 'Onbekende fout', details: e.details || null, ts: e.ts };
+        st.error = { text: e.error || 'Unknown error', details: e.details || null, ts: e.ts };
         set('error', e.ts);
         break;
       case 'SessionEnd':
@@ -460,7 +460,7 @@ function deriveFromTranscript(tail) {
         }
       }
     } else if (e.type === 'system' && e.subtype === 'api_error') {
-      st.error = { text: clip(String(e.content || e.error || 'API-fout'), 300), ts };
+      st.error = { text: clip(String(e.content || e.error || 'API error'), 300), ts };
     }
   }
   tail.derived = st;
@@ -831,7 +831,7 @@ function deriveFromCodex(tail) {
           set('interrupted', ts);
           break;
         case 'error':
-          st.error = { text: clip(String(p.message || 'Onbekende fout'), 300), ts };
+          st.error = { text: clip(String(p.message || 'Unknown error'), 300), ts };
           set('error', ts);
           break;
       }
@@ -1892,7 +1892,7 @@ function handle(req, res) {
       });
     }
     if (url.pathname === '/api/stream') {
-      if (streams.size >= MAX_STREAMS) return sendJson(res, { error: 'Te veel verbindingen' }, 429);
+      if (streams.size >= MAX_STREAMS) return sendJson(res, { error: 'Too many connections' }, 429);
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
       res.write('retry: 2000\n\n');
       const c = { res, windowMin, lastBody: null };
