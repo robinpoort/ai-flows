@@ -538,8 +538,11 @@ body.no-sessions .side { display: grid; place-items: center; border-right: 0; ba
   text-align: left;
   cursor: pointer;
 }
-.ctx button:hover,
-.ctx button:focus-visible { background: var(--accent); color: var(--on-accent); outline: none; }
+/* One item lit at a time, as in a macOS menu: the one under the mouse, or
+   the one the arrow keys moved to (app.js moves the focus along with the
+   mouse). Opened with a click, none is lit yet. */
+.ctx:focus { outline: none; }
+.ctx button:focus { background: var(--accent); color: var(--on-accent); outline: none; }
 .ctx-sep { height: 1px; margin: 4px 6px; background: var(--line); }
 
 /* limits: per AI tool one meter fixed to the bottom of the window, the bar

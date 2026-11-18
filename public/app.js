@@ -1131,7 +1131,7 @@
     ctxSid = null;
   }
 
-  function openCtx(x, y, s) {
+  function openCtx(x, y, s, byKey) {
     ctxSid = s.id;
     const open = ctx.querySelector('[data-ctx="open"]');
     open.hidden = !s.openUrl;
@@ -1141,7 +1141,8 @@
     const r = ctx.getBoundingClientRect();
     ctx.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 4))}px`;
     ctx.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - 4))}px`;
-    ctx.querySelector('button:not([hidden])').focus();
+    // From the keyboard the first item is lit; from a click none is yet.
+    (byKey ? ctx.querySelector('button:not([hidden])') : ctx).focus({ preventScroll: true });
   }
 
   // kind: 'read', 'unread', 'closed' or 'open' (the undo of 'closed').
@@ -1177,7 +1178,7 @@
     const s = el && /^[ms]:/.test(el.dataset.key) ? find(el.dataset.key.slice(2)) : null;
     if (!s) { closeCtx(); return; }
     e.preventDefault();
-    openCtx(e.clientX, e.clientY, s);
+    openCtx(e.clientX, e.clientY, s, e.pointerType === '');
   });
 
   ctx.addEventListener('click', (e) => {
@@ -1196,7 +1197,17 @@
     e.preventDefault();
     const items = $$('button:not([hidden])', ctx);
     const i = items.indexOf(document.activeElement);
-    items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
+    const next = i < 0 ? (e.key === 'ArrowDown' ? 0 : items.length - 1)
+      : (i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length;
+    items[next].focus();
+  });
+  // The lit item follows the mouse, and goes out when the mouse leaves.
+  ctx.addEventListener('pointermove', (e) => {
+    const b = e.target.closest('button');
+    if (b && document.activeElement !== b) b.focus({ preventScroll: true });
+  });
+  ctx.addEventListener('pointerleave', () => {
+    if (ctx.contains(document.activeElement) && document.activeElement !== ctx) ctx.focus({ preventScroll: true });
   });
 
   document.addEventListener('pointerdown', (e) => { if (!e.target.closest('#ctx')) closeCtx(); });
