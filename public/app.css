@@ -599,6 +599,19 @@ body { padding-bottom: var(--lim, 0px); }
 .lim-pct.high { font-weight: 650; color: var(--red); }
 .lim-off { color: var(--faint); }
 .lim-off.signin { color: var(--amber); }
+/* Signed out: a small button that copies the sign-in command. */
+button.lim-off.signin {
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--amber) 10%, transparent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+button.lim-off.signin:hover { background: color-mix(in srgb, var(--amber) 18%, transparent); }
+button.lim-off.signin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.lim-tool.old { opacity: .45; }
 
 /* Full view: room to spell it out. Per limit a card with its name, when it
    resets and its percentage over a bigger bar; the compact meter is for the

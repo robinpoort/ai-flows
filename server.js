@@ -1013,6 +1013,7 @@ function saveMarks() {
 const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const CLAUDE_KEYCHAIN = 'Claude Code-credentials';
 const CLAUDE_USAGE_EVERY = 3 * MINUTE;
+const LIMITS_STALE = 30 * MINUTE;
 const CODEX_LIMITS_EVERY = 10 * 1000;
 // For tests only: a JSON file with an endpoint response, read in place of the
 // keychain and the network ({"error": "expired"} stands for an expired login).
@@ -1088,10 +1089,13 @@ function claudeWindows(body) {
 function claudeToken(done) {
   execFile('/usr/bin/security', ['find-generic-password', '-s', CLAUDE_KEYCHAIN, '-w'],
     { timeout: 10000, maxBuffer: 256 * 1024 }, (err, out) => {
+      // No item: no Claude Code login on this Mac.
       if (err) return done(null, 'login');
       try {
         const o = JSON.parse(out).claudeAiOauth || {};
-        if (typeof o.accessToken !== 'string' || !o.accessToken) return done(null, 'login');
+        // Signed out, or the sign-in has ended: Claude Code keeps the item,
+        // without a token. Only "claude auth login" brings it back.
+        if (o.loginEnded || typeof o.accessToken !== 'string' || !o.accessToken) return done(null, 'signin');
         if (Number(o.expiresAt) && Number(o.expiresAt) < Date.now()) return done(null, 'expired');
         done(o.accessToken, null);
       } catch { done(null, 'login'); }
@@ -1167,6 +1171,7 @@ function refreshClaudeLimits() {
     try { body = JSON.parse(fs.readFileSync(CLAUDE_USAGE_FILE, 'utf8')); } catch {}
     if (body && body.error === 'expired') return expired();
     if (body && body.error === 'ratelimited') return tooOften(0);
+    if (body && body.error === 'signin') return finish(null, 'signin', 2000);
     return finish(claudeWindows(body), body ? null : 'offline', 2000);
   }
   claudeToken(async (token, problem) => {
@@ -1271,9 +1276,18 @@ function limitsState(watching) {
   const now = Date.now();
   const out = [];
   const cl = limitsCache.claude;
-  if (on.claude && (cl.windows || (cl.error && cl.error !== 'login'))) {
+  // No Claude Code login on this Mac: no meter. A login that has expired or
+  // ended: what to do instead of the last numbers, which no longer count.
+  // Numbers that could not be refreshed for half an hour go out as old.
+  if (on.claude && cl.error !== 'login' && (cl.windows || cl.error)) {
     const renew = cl.renew === 'checking' ? 'busy' : cl.renew;
-    out.push({ tool: 'claude', name: 'Claude', windows: cl.windows ? current(cl.windows, now) : [], at: cl.at, error: cl.error, renew: cl.error === 'expired' ? renew || null : null });
+    const problem = cl.error === 'expired' || cl.error === 'signin';
+    const windows = !problem && cl.windows ? current(cl.windows, now) : [];
+    out.push({
+      tool: 'claude', name: 'Claude', windows, at: cl.at, error: cl.error,
+      stale: windows.length > 0 && now - (cl.at || 0) > LIMITS_STALE,
+      renew: cl.error === 'expired' ? renew || null : null,
+    });
   }
   const cx = limitsCache.codex;
   if (on.codex && cx.windows) out.push({ tool: 'codex', name: 'Codex', windows: current(cx.windows, now), at: cx.at, error: null });

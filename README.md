@@ -229,8 +229,8 @@ at most every 15 minutes while a dashboard is open, with a bare environment,
 hooks, the session log and memory off, and without reading its output (it names
 the account). `/usage` runs in Claude Code itself; it asks the model nothing.
 Meanwhile the bar says "renewing login…". Still expired after that means the
-sign-in itself has ended: the bar says "sign in again", which takes
-`claude auth login` in a terminal. With the setting off the keychain is not
+sign-in itself has ended: the bar shows **Sign in again**, a button that
+copies `claude auth login` (see Limits). With the setting off the keychain is not
 read and nothing is run, and without a Claude Code login the Claude meter is
 left out.
 
@@ -454,7 +454,14 @@ the micro view has them on a line of their own, or at the end of its strip. Each
   (6 minutes, then 12, up to an hour) and keeps showing the last numbers (their
   age is in the tooltip). Those are kept in `~/.claude/ai-flows/limits.json`,
   so a restart shows them at once and does not ask again before they are due.
-  With no numbers yet the bar says "hold on".
+  With no numbers yet the bar says "hold on". Numbers that could not be
+  refreshed for half an hour are shown faint, and the tooltip says how old
+  they are. When Claude Code is signed out or its sign-in has ended, the old
+  numbers go and the bar shows a **Sign in again** button. It copies
+  `claude auth login`: paste that in Terminal and press Return, and your
+  browser opens to sign in to your Claude account; within a minute the
+  numbers are back. With no Claude Code login on the Mac at all there is no
+  meter.
 - **Codex**: every Codex turn writes its limits into the thread's rollout
   file, so the bar shows them as of your last Codex turn. A window whose reset
   time has passed shows 0%.
@@ -482,7 +489,7 @@ open and notifications it would send instead of doing it.
 `AI_FLOWS_CODEX_HOME=…` reads Codex threads from another folder than `~/.codex`, and
 `AI_FLOWS_CLAUDE_USAGE=<file>` reads a usage response from a file instead of the
 keychain and the network (`{"error": "expired"}` stands for an expired login,
-`{"error": "ratelimited"}` for "asked too often"),
+`{"error": "ratelimited"}` for "asked too often", `{"error": "signin"}` for a sign-in that has ended),
 and `AI_FLOWS_CLAUDE_BIN=<file>` is run in place of `claude` to renew it. To feed it test
 events, pipe JSON into `./hook.sh <folder>` (`./hook.sh <folder> codex` for a Codex event). API calls need the key as
 `X-AI-Flows-Token` (or `?t=` for the stream). `?snapshot` loads the state once

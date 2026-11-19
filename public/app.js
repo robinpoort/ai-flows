@@ -847,7 +847,7 @@
   // expired login is renewed by itself; only an ended sign-in needs you.
   const LIMIT_PROBLEM = {
     renewing: ['renewing login…', 'Claude Code’s login had expired and is being renewed now.'],
-    signin: ['sign in again', 'Your Claude Code sign-in has ended. Sign in again with claude auth login in a terminal.'],
+    signin: ['Sign in again', 'Your Claude Code sign-in has ended. Click to copy the command that signs you in again (claude auth login).'],
     expired: ['login expired', 'Claude Code’s login has expired. Start claude in a terminal to renew it.'],
     offline: ['unreachable', 'The limits cannot be fetched right now. It will try again shortly.'],
     busy: ['hold on', 'Claude is not giving out the limits for a moment, as they were asked for often. It will try again later by itself.'],
@@ -902,11 +902,16 @@
       const [short, long] = LIMIT_PROBLEM[kind] || ['unavailable', 'No numbers yet.'];
       const why = `${t.name}: ${long}`;
       // Named after its tool here, so it is clear whose login it is.
+      // Signed out: a button that copies the command which signs you in.
+      if (kind === 'signin') {
+        return `<div class="lim-tool off" role="group" aria-label="${esc(t.name)}"><span class="lim-name">${esc(t.name)}</span>` +
+          `<button type="button" class="lim-off signin" data-act="signin" title="${esc(long)}">${esc(short)}</button></div>`;
+      }
       return `<div class="lim-tool off" role="img" aria-label="${esc(why)}" title="${esc(why)}"><span class="lim-name">${esc(t.name)}</span><span class="lim-off ${kind || ''}">${esc(short)}</span></div>`;
     }
     const wins = t.windows.map((w) => ({ ...w, pct: Math.round(w.pct) }));
     const lines = wins.map((w) => `${limitLabel(w.key)}: ${usedUp(w) ? `used up, back in ${untilText(w.resetsAt)}` : `${w.pct}% used`}${w.resetsAt ? `, ${resetText(w.resetsAt)}` : ''}`);
-    if (t.at && Date.now() - t.at > 30 * 60000) lines.push(`Measured ${ago(t.at)}`);
+    if (t.at && Date.now() - t.at > 30 * 60000) lines.push(t.stale ? `Measured ${ago(t.at)}; newer numbers could not be fetched` : `Measured ${ago(t.at)}`);
     const tracks = wins.map(limitTrack).join('');
     const nums = wins.map((w) => `<span class="lim-pct ${limitLevel(w.pct)}">${limitValue(w)}</span>`).join('<span class="lim-sep">/</span>');
     // The full view has room to spell it out: per limit its name, when it
@@ -914,7 +919,9 @@
     const cards = wins.map((w) => `<span class="lim-win"><span class="lim-wtop"><span class="lim-wname">${esc(limitLabel(w.key))}</span>` +
       `${w.resetsAt ? `<span class="lim-reset">${esc(resetText(w.resetsAt))}</span>` : ''}<span class="lim-wpct ${limitLevel(w.pct)}">${limitValue(w)}</span></span>` +
       `${limitTrack(w)}</span>`).join('');
-    return `<div class="lim-tool" role="img" aria-label="${esc(`${t.name}. ${lines.join('. ')}`)}" title="${esc([t.name, ...lines].join('\n'))}">` +
+    // Old numbers (not refreshed for half an hour) are shown faint; the
+    // tooltip says how old.
+    return `<div class="lim-tool${t.stale ? ' old' : ''}" role="img" aria-label="${esc(`${t.name}. ${lines.join('. ')}`)}" title="${esc([t.name, ...lines].join('\n'))}">` +
       `<span class="lim-name">${esc(label)}</span><span class="lim-meter">${tracks}</span><span class="lim-nums">${nums}</span><span class="lim-wins">${cards}</span></div>`;
   }
 
@@ -1271,6 +1278,9 @@
       } else {
         toast(`“${text}” copied.`);
       }
+    } else if (act === 'signin') {
+      await copy('claude auth login');
+      toast('Copied: claude auth login. Paste it in Terminal and press Return; your browser opens to sign in.');
     } else if (act === 'copy') {
       seenHere(find(el.dataset.sid));
       await copy(String(el.dataset.text).replace(INVISIBLE, ''));
